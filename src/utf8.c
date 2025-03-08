@@ -6,13 +6,13 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
-#ifndef NDEBUG
+#ifdef DEBUG
 # include <stdio.h>
 #endif
 
 #include "utf8_priv.h"
 
-#ifndef NDEBUG
+#ifdef DEBUG
 static const_inline char const *
 utf8_st8_name (enum utf8_st8 st8)
 {
@@ -27,7 +27,7 @@ utf8_st8_name (enum utf8_st8 st8)
 
 	return nullptr;
 }
-#endif /* !NDEBUG */
+#endif /* DEBUG */
 
 #define X1(x)   x
 #define X2(x)   x,x
@@ -222,24 +222,24 @@ utf8_push_to_cache (struct utf8 *const u8p,
 	};
 
 	uint8_t len = utf8_len[st8];
-#ifndef NDEBUG
+#ifdef DEBUG
 	uint8_t k = 0;
-#endif /* !NDEBUG */
+#endif /* DEBUG */
 
 	if (utf8_st8_is_leading_byte(st8)) {
 		// Leading byte or ASCII
 		u8p->cache[0] = len;
 		__builtin_memset(&u8p->cache[1], 0, sizeof u8p->cache - 1U);
-#ifndef NDEBUG
+#ifdef DEBUG
 		fprintf(stderr, " [\033[1;3%" PRIu8 "m%02" PRIx8 "\033[m]", len, len);
 		++k;
-#endif /* !NDEBUG */
+#endif /* DEBUG */
 	}
 
 	uint8_t pos = u8p->cache[0] + 1U - len;
 	u8p->cache[pos] = byte;
 
-#ifndef NDEBUG
+#ifdef DEBUG
 	for (;k < pos; ++k) {
 		fprintf(stderr, " [%02" PRIx8 "]", u8p->cache[k]);
 	}
@@ -247,7 +247,7 @@ utf8_push_to_cache (struct utf8 *const u8p,
 	for (; ++k < sizeof u8p->cache;) {
 		fprintf(stderr, " [%02" PRIx8 "]", u8p->cache[k]);
 	}
-#endif /* !NDEBUG */
+#endif /* DEBUG */
 }
 
 #undef UTF8_PARSER_DESCRIPTOR
@@ -288,11 +288,11 @@ utf8_set_state (struct utf8 *const   u8p,
 	u8p->state = next_bit;
 	utf8_push_to_cache(u8p, (enum utf8_st8)e, byte);
 
-#ifndef NDEBUG
+#ifdef DEBUG
 	fprintf(stderr, "  %6s -> %-6s\n",
 	        utf8_st8_name(*st8),
 	        utf8_st8_name((enum utf8_st8)e));
-#endif /* !NDEBUG */
+#endif /* DEBUG */
 
 	*st8 = (enum utf8_st8)e;
 	return true;
