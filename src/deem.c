@@ -14,7 +14,8 @@ struct length {
 };
 
 static char const *
-skip_ws (char const *str);
+strip_ws (char const  *str,
+          char const **end);
 
 static char *
 lazy (char const    *f,
@@ -24,29 +25,40 @@ lazy (char const    *f,
 	if (c < 2 || !*v || !v[1])
 		return NULL;
 
-	char const *p = skip_ws(v[0]);
-	if (p)
-		printf("'%s'\n", p);
+	char const *end[2] = {
+		NULL,
+		NULL
+	};
+	char const *str[2] = {
+		strip_ws(v[0], &end[0]),
+		strip_ws(v[1], &end[1])
+	};
+	if (!str[0] || !str[1])
+		return NULL;
 
-	size_t var = strlen(v[0]);
-	size_t val = strlen(v[1]);
+	size_t var = (size_t)(end[0] - str[0]);
+	size_t val = (size_t)(end[1] - str[1]);
 	if (!var || !val)
 		return NULL;
 
 	size_t siz = sizeof "override =$(eval override :=)$()"
 	           + (var << 1U) + var + val;
 
-	char *buf = gmk_alloc(siz);
-	if (!buf)
+	char buf[1024];
+	char *ptr = siz > sizeof buf ? gmk_alloc(siz) : buf;
+	if (!ptr)
 		return NULL;
 
-	int len = snprintf(buf, siz, "override %s=$("
-	                   "eval override %s:=%s)$(%s)",
-	                   *v, *v, v[1], *v);
-	if (len == siz - 1U)
+	int len = snprintf(ptr, siz, "override %.*s=$("
+	                   "eval override %.*s:=%.*s)$(%.*s)",
+	                   (int)var, str[0], (int)var, str[0],
+	                   (int)val, str[1], (int)var, str[0]);
+	if (len > 0 && (size_t)len == siz - 1U)
 		gmk_eval(buf, NULL);
 
-	gmk_free(buf);
+	if (ptr != buf)
+		gmk_free(ptr);
+
 	return NULL;
 }
 
@@ -59,25 +71,33 @@ deem_gmk_setup (gmk_floc const *floc)
 }
 
 static char const *
-skip_ws (char const *str)
+strip_ws (char const  *str,
+          char const **end)
 {
-	struct utf8 u8p = utf8();
-	uint8_t const *p = (uint8_t const *)str;
-	for (uint8_t const *q = p; *q; q = p) {
-		p = utf8_parse_next_code_point(&u8p, q);
-		if (u8p.error)
-			// TODO
-			return NULL;
-
-		if (*q >= (uint8_t)'\t' &&
-		    (*q <= (uint8_t)'\r' ||
-		     *q == (uint8_t)' '))
-			continue;
-
-		return (char const *)q;
+	while (*str >= '\t' && (*str <= '\r' || *str == ' ')) {
+		++str;
 	}
 
-	return (char const *)p;
+	uint8_t const *p = (uint8_t const *)str;
+	size_t ws_count = 0;
+	struct utf8 u8p = utf8();
+
+	for (uint8_t const *q = p; *q; q = p) {
+		p = utf8_parse_next_code_point(&u8p, q);
+		if (u8p.error) {
+			fprintf(stderr, "UTF-8 error: %s\n",
+			        strerror(u8p.error));
+			return NULL;
+		}
+
+		for (ws_count = 0U;
+		     *p >= (uint8_t)'\t' && (*p <= (uint8_t)'\r' ||
+		                             *p == (uint8_t)' '); ++p)
+			++ws_count;
+	}
+
+	*end = (char const *)p - ws_count;
+	return str;
 }
 
 static struct length

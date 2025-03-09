@@ -22,6 +22,8 @@ deem.so: $(OBJS)
 %.c.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(lazy now1,$(shell date +%S; echo lazy1 >&2))
-$(lazy now2,$(shell date +%S; echo lazy2 >&2))
-$(lazy now3,$(shell date +%S; echo lazy3 >&2))
+$(lazy \
+	now1    ,$(shell date +%S; echo lazy1 >&2))
+$(lazy now2  , \
+    $(shell date +%S; echo lazy2 >&2))
+$(lazy now3		,$(shell date +%S; echo lazy3 >&2))
