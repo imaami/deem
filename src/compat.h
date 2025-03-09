@@ -113,9 +113,11 @@ diag_clang(ignored "-Wpre-c11-compat")
 #ifndef _MSC_VER
 # define force_inline __attribute__((always_inline)) inline
 # define const_inline __attribute__((const)) force_inline
+# define useless __attribute__((unused))
 #else // _MSC_VER
 # define force_inline __forceinline
 # define const_inline __forceinline
+# define useless
 #endif // _MSC_VER
 
 #ifndef __has_builtin
