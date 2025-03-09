@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: LGPL-3.0-or-later */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <gnumake.h>
 
@@ -13,21 +14,25 @@ struct length {
 	size_t n_chars;
 };
 
+struct str {
+	char *ptr;
+	size_t len;
+};
+
 static char const *
 strip_ws (char const  *str,
           char const **end);
 
 static char *
-lazy (char const    *f,
-      unsigned int   c,
-      char         **v)
+lazy (useless char const  *f,
+      unsigned int         c,
+      char               **v)
 {
 	if (c < 2 || !*v || !v[1])
 		return nullptr;
 
 	char const *end[2] = {
-		nullptr,
-		nullptr
+		v[0], v[1]
 	};
 	char const *str[2] = {
 		strip_ws(v[0], &end[0]),
@@ -62,11 +67,132 @@ lazy (char const    *f,
 	return nullptr;
 }
 
+static struct str
+sgr2_ (char const *color,
+       size_t      color_len,
+       char const *text,
+       size_t      text_len)
+{
+	//           "\e[" <color> "m" <text> "\e[m" <NUL>
+	size_t size = 2U + color_len + 1U + text_len + 3U + 1U;
+	struct str s = {
+		.ptr = gmk_alloc(size),
+		.len = 0
+	};
+	if (s.ptr) {
+		s.ptr[0] = '\e';
+		s.ptr[1] = '[';
+		memcpy(&s.ptr[2], color, color_len);
+
+		s.len = 2U + color_len;
+		s.ptr[s.len++] = 'm';
+
+		memcpy(&s.ptr[s.len], text, text_len);
+		s.len += text_len;
+		s.ptr[s.len++] = '\e';
+		s.ptr[s.len++] = '[';
+		s.ptr[s.len++] = 'm';
+
+		s.ptr[s.len] = '\0';
+	}
+	return s;
+}
+
+static char *
+sgr (useless char const  *f,
+     unsigned int         c,
+     char               **v)
+{
+	if (c != 2U || !v[0] || !v[1])
+		return nullptr;
+
+	char const *end = v[0];
+	char const *str = strip_ws(v[0], &end);
+	if (!str)
+		return nullptr;
+
+	return sgr2_(
+		str, (size_t)(end - str),
+		v[1], strlen(v[1])
+	).ptr;
+}
+
+static char *
+msg (useless char const  *f,
+     unsigned int         c,
+     char               **v)
+{
+	if (c != 2U || !v[0] || !v[1])
+		return nullptr;
+
+	char const *pfx_end = v[0];
+	char const *pfx_ptr = strip_ws(v[0], &pfx_end);
+	if (!pfx_ptr)
+		return nullptr;
+
+	size_t pfx_len = (size_t)(pfx_end - pfx_ptr);
+	if (!pfx_len)
+		return nullptr;
+
+	size_t msg_len = strlen(v[1]);
+	size_t size = sizeof "$(info $(_pfx))" + pfx_len + msg_len;
+
+	char buf[1024];
+	char *ptr = size > sizeof buf ? gmk_alloc(size) : buf;
+	if (ptr) {
+		int len = snprintf(ptr, size, "$(info $(%.*s_pfx)%s)",
+		                  (int)pfx_len, pfx_ptr, v[1]);
+		if (len > 0 && (size_t)len == size - 1U)
+			gmk_eval(ptr, nullptr);
+
+		if (ptr != buf)
+			gmk_free(ptr);
+	}
+
+	return nullptr;
+}
+
+static char *
+register_msg (useless char const  *f,
+              unsigned int         c,
+              char               **v)
+{
+	if (c != 2U || !v[0] || !v[1])
+		return nullptr;
+
+	char const *pfx_end = v[0];
+	char const *pfx_ptr = strip_ws(v[0], &pfx_end);
+	if (!pfx_ptr)
+		return nullptr;
+
+	size_t pfx_len = (size_t)(pfx_end - pfx_ptr);
+	if (!pfx_len)
+		return nullptr;
+
+	size_t msg_len = strlen(v[1]);
+	size_t size = sizeof "$(info $(_pfx))" + pfx_len + msg_len;
+
+	char *ptr = gmk_alloc(size);
+	if (ptr) {
+		int len = snprintf(ptr, size, "$(info $(%.*s_pfx)%s)",
+		                  (int)pfx_len, pfx_ptr, v[1]);
+		if (len > 0 && (size_t)len == size - 1U)
+			gmk_eval(ptr, nullptr);
+		gmk_free(ptr);
+	}
+
+	return nullptr;
+}
+
 int
-deem_gmk_setup (gmk_floc const *floc)
+deem_gmk_setup (useless gmk_floc const *floc)
 {
 	puts("\e[1;34md\e[m \e[1;36me\e[m \e[1;32me\e[m \e[1;33mm\e[m");
 	gmk_add_function("lazy", lazy, 2, 2, GMK_FUNC_NOEXPAND);
+	gmk_add_function("SGR", sgr, 1, 2, GMK_FUNC_NOEXPAND);
+	gmk_add_function("_SGR", sgr, 1, 2, GMK_FUNC_DEFAULT);
+	gmk_add_function("msg", msg, 2, 2, GMK_FUNC_DEFAULT);
+	gmk_add_function("register-msg", register_msg, 2, 2, GMK_FUNC_DEFAULT);
 	return 1;
 }
 
@@ -85,8 +211,8 @@ strip_ws (char const  *str,
 	for (uint8_t const *q = p; *q; q = p) {
 		p = utf8_parse_next_code_point(&u8p, q);
 		if (u8p.error) {
-			fprintf(stderr, "UTF-8 error: %s\n",
-			        strerror(u8p.error));
+			(void)fprintf(stderr, "UTF-8 error: %s\n",
+			              strerror(u8p.error));
 			return nullptr;
 		}
 
