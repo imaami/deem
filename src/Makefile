@@ -71,7 +71,7 @@ override OBJS := $(SRCS:%=%.o)
 deem.so: $(OBJS)
 	$(CC) $(CFLAGS) -shared -fPIC -o $@ $^
 
-$(lazy YEET_pfx,$(SGR 38;5;191,YEET))
+$(register-msg YEET,38;5;191)
 override Y_ := (╯°□°）╯︵ ┻━┻
 override Y__ = $(SGR 38;5;119,    $(Y_))
 .PHONY: yeet

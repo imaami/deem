@@ -98,23 +98,24 @@ sgr2_ (char const *color,
 	return s;
 }
 
+static struct str
+sgr2 (char const *color,
+      char const *text)
+{
+	char const *e = color;
+	char const *s = strip_ws(color, &e);
+	if (s)
+		return sgr2_(s, (size_t)(e - s),
+		             text, strlen(text));
+	return (struct str){nullptr, 0U};
+}
+
 static char *
 sgr (useless char const  *f,
      unsigned int         c,
      char               **v)
 {
-	if (c != 2U || !v[0] || !v[1])
-		return nullptr;
-
-	char const *end = v[0];
-	char const *str = strip_ws(v[0], &end);
-	if (!str)
-		return nullptr;
-
-	return sgr2_(
-		str, (size_t)(end - str),
-		v[1], strlen(v[1])
-	).ptr;
+	return sgr2(v[0], v[1]).ptr;
 }
 
 static char *
@@ -157,29 +158,31 @@ register_msg (useless char const  *f,
               unsigned int         c,
               char               **v)
 {
-	if (c != 2U || !v[0] || !v[1])
+	struct str sgr = sgr2(v[1], v[0]);
+	if (!sgr.ptr)
 		return nullptr;
 
 	char const *pfx_end = v[0];
 	char const *pfx_ptr = strip_ws(v[0], &pfx_end);
-	if (!pfx_ptr)
+	if (!pfx_ptr) {
+		gmk_free(sgr.ptr);
 		return nullptr;
+	}
+
+	char buf[256];
 
 	size_t pfx_len = (size_t)(pfx_end - pfx_ptr);
-	if (!pfx_len)
+	if (!pfx_len || pfx_len > sizeof buf - sizeof "_pfx") {
+		gmk_free(sgr.ptr);
 		return nullptr;
-
-	size_t msg_len = strlen(v[1]);
-	size_t size = sizeof "$(info $(_pfx))" + pfx_len + msg_len;
-
-	char *ptr = gmk_alloc(size);
-	if (ptr) {
-		int len = snprintf(ptr, size, "$(info $(%.*s_pfx)%s)",
-		                  (int)pfx_len, pfx_ptr, v[1]);
-		if (len > 0 && (size_t)len == size - 1U)
-			gmk_eval(ptr, nullptr);
-		gmk_free(ptr);
 	}
+
+	memcpy(buf, pfx_ptr, pfx_len);
+	memcpy(&buf[pfx_len], "_pfx", sizeof "_pfx");
+
+	char *arr[] = {buf, sgr.ptr};
+	lazy(nullptr, 2U, arr);
+	gmk_free(sgr.ptr);
 
 	return nullptr;
 }
@@ -189,8 +192,8 @@ deem_gmk_setup (useless gmk_floc const *floc)
 {
 	puts("\e[1;34md\e[m \e[1;36me\e[m \e[1;32me\e[m \e[1;33mm\e[m");
 	gmk_add_function("lazy", lazy, 2, 2, GMK_FUNC_NOEXPAND);
-	gmk_add_function("SGR", sgr, 1, 2, GMK_FUNC_NOEXPAND);
-	gmk_add_function("_SGR", sgr, 1, 2, GMK_FUNC_DEFAULT);
+	gmk_add_function("SGR", sgr, 2, 2, GMK_FUNC_NOEXPAND);
+	gmk_add_function("_SGR", sgr, 2, 2, GMK_FUNC_DEFAULT);
 	gmk_add_function("msg", msg, 2, 2, GMK_FUNC_DEFAULT);
 	gmk_add_function("register-msg", register_msg, 2, 2, GMK_FUNC_DEFAULT);
 	return 1;
