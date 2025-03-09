@@ -23,23 +23,23 @@ lazy (char const    *f,
       char         **v)
 {
 	if (c < 2 || !*v || !v[1])
-		return NULL;
+		return nullptr;
 
 	char const *end[2] = {
-		NULL,
-		NULL
+		nullptr,
+		nullptr
 	};
 	char const *str[2] = {
 		strip_ws(v[0], &end[0]),
 		strip_ws(v[1], &end[1])
 	};
 	if (!str[0] || !str[1])
-		return NULL;
+		return nullptr;
 
 	size_t var = (size_t)(end[0] - str[0]);
 	size_t val = (size_t)(end[1] - str[1]);
 	if (!var || !val)
-		return NULL;
+		return nullptr;
 
 	size_t siz = sizeof "override =$(eval override :=)$()"
 	           + (var << 1U) + var + val;
@@ -47,19 +47,19 @@ lazy (char const    *f,
 	char buf[1024];
 	char *ptr = siz > sizeof buf ? gmk_alloc(siz) : buf;
 	if (!ptr)
-		return NULL;
+		return nullptr;
 
 	int len = snprintf(ptr, siz, "override %.*s=$("
 	                   "eval override %.*s:=%.*s)$(%.*s)",
 	                   (int)var, str[0], (int)var, str[0],
 	                   (int)val, str[1], (int)var, str[0]);
 	if (len > 0 && (size_t)len == siz - 1U)
-		gmk_eval(buf, NULL);
+		gmk_eval(buf, nullptr);
 
 	if (ptr != buf)
 		gmk_free(ptr);
 
-	return NULL;
+	return nullptr;
 }
 
 int
@@ -87,7 +87,7 @@ strip_ws (char const  *str,
 		if (u8p.error) {
 			fprintf(stderr, "UTF-8 error: %s\n",
 			        strerror(u8p.error));
-			return NULL;
+			return nullptr;
 		}
 
 		for (ws_count = 0U;
