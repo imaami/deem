@@ -29,6 +29,11 @@ struct loc256 {
 	char       d[256U - sizeof(struct buf)];
 };
 
+struct loc64 {
+	struct buf b;
+	char       d[64U - sizeof(struct buf)];
+};
+
 static struct len
 string_length (char const *str);
 
@@ -36,6 +41,19 @@ static force_inline struct loc256
 loc256 (struct loc256 *const loc)
 {
 	return (struct loc256){
+		.b = {
+			.ptr = loc->d,
+			.cap = sizeof loc->d,
+			.use = {0, 0}
+		},
+		.d = {0}
+	};
+}
+
+static force_inline struct loc64
+loc64 (struct loc64 *const loc)
+{
+	return (struct loc64){
 		.b = {
 			.ptr = loc->d,
 			.cap = sizeof loc->d,
@@ -55,6 +73,15 @@ loc256_fini (struct loc256 *const loc)
 }
 
 static force_inline void
+loc64_fini (struct loc64 *const loc)
+{
+	if (loc->b.ptr != loc->d) {
+		free(loc->b.ptr);
+		*loc = loc64(loc);
+	}
+}
+
+static force_inline void
 buf_append_unsafe (struct buf *const buf,
                    char const *const str,
                    struct len *const len)
@@ -62,6 +89,19 @@ buf_append_unsafe (struct buf *const buf,
 	memcpy(&buf->ptr[buf->use.n_bytes], str, len->n_bytes);
 	buf->use.n_bytes += len->n_bytes;
 	buf->use.n_chars += len->n_chars;
+}
+
+#define buf_append_literal_unsafe(buf, lit) \
+	buf_append_unsafe((buf), (lit), \
+		&(struct len){ \
+			sizeof (lit) - 1U, \
+			sizeof (lit) - 1U \
+		})
+
+static force_inline void
+buf_terminate (struct buf *const buf)
+{
+	buf->ptr[buf->use.n_bytes] = '\0';
 }
 
 struct str {
@@ -93,6 +133,16 @@ buf_prealloc (struct buf *const buf,
 	return true;
 }
 
+static force_inline struct buf
+buf_gmk_alloc (size_t size)
+{
+	return (struct buf){
+		.ptr = gmk_alloc(size),
+		.cap = size,
+		.use = {0, 0}
+	};
+}
+
 static void
 lazy_ (struct buf *buf,
        char const *var,
@@ -115,36 +165,17 @@ lazy_ (struct buf *buf,
 		+ val_len.n_bytes))
 		return;
 
-	buf_append_unsafe(buf, "override ",
-		&(struct len){
-			sizeof "override " - 1U,
-			sizeof "override " - 1U
-		});
+	buf_append_literal_unsafe(buf, "override ");
 	buf_append_unsafe(buf, var_ptr, &var_len);
-	buf_append_unsafe(buf, "=$(eval override ",
-		&(struct len){
-			sizeof "=$(eval override " - 1U,
-			sizeof "=$(eval override " - 1U
-		});
+	buf_append_literal_unsafe(buf, "=$(eval override ");
 	buf_append_unsafe(buf, var_ptr, &var_len);
-	buf_append_unsafe(buf, ":=",
-		&(struct len){
-			sizeof ":=" - 1U,
-			sizeof ":=" - 1U
-		});
+	buf_append_literal_unsafe(buf, ":=");
 	buf_append_unsafe(buf, val_ptr, &val_len);
-	buf_append_unsafe(buf, ")$(",
-		&(struct len){
-			sizeof ")$(" - 1U,
-			sizeof ")$(" - 1U
-		});
+	buf_append_literal_unsafe(buf, ")$(");
 	buf_append_unsafe(buf, var_ptr, &var_len);
-	buf_append_unsafe(buf, ")",
-		&(struct len){
-			sizeof ")" - 1U,
-			sizeof ")" - 1U
-		});
-	buf->ptr[buf->use.n_bytes] = '\0';
+	buf_append_literal_unsafe(buf, ")");
+	buf_terminate(buf);
+
 	gmk_eval(buf->ptr, nullptr);
 }
 
@@ -204,12 +235,62 @@ sgr2 (char const *color,
 	return (struct str){nullptr, 0U};
 }
 
+static struct buf
+sgr_gmk_alloc (char const *clr,
+               char const *txt)
+{
+	struct len clr_len;
+	char const *clr_ptr = strip_ws(clr, &clr_len);
+	if (!clr_ptr)
+		return (struct buf){nullptr};
+
+	struct len txt_len = string_length(txt);
+	struct buf buf = buf_gmk_alloc(
+		/* "\e[" <clr>         "m"  <txt>         "\e[m" <NUL> */
+		2U + clr_len.n_bytes + 1U + txt_len.n_bytes + 3U + 1U);
+	if (buf.ptr) {
+		buf_append_literal_unsafe(&buf, "\e[");
+		buf_append_unsafe(&buf, clr_ptr, &clr_len);
+		buf_append_literal_unsafe(&buf, "m");
+		buf_append_unsafe(&buf, txt, &txt_len);
+		buf_append_literal_unsafe(&buf, "\e[m");
+		buf_terminate(&buf);
+	}
+
+	return buf;
+}
+
+static void
+sgr_buf (struct buf *const buf,
+         char const *const clr,
+         char const *const txt)
+{
+	struct len clr_len;
+	char const *clr_ptr = strip_ws(clr, &clr_len);
+	if (!clr_ptr)
+		return;
+
+	struct len txt_len = string_length(txt);
+	if (!buf_prealloc(buf,
+		/* "\e[" <clr>         "m"  <txt>         "\e[m" <NUL> */
+		2U + clr_len.n_bytes + 1U + txt_len.n_bytes + 3U + 1U))
+		return;
+
+	buf_append_literal_unsafe(buf, "\e[");
+	buf_append_unsafe(buf, clr_ptr, &clr_len);
+	buf_append_literal_unsafe(buf, "m");
+	buf_append_unsafe(buf, txt, &txt_len);
+	buf_append_literal_unsafe(buf, "\e[m");
+	buf_terminate(buf);
+}
+
+
 static char *
 sgr (useless char const    *f,
      useless unsigned int   c,
      char                 **v)
 {
-	return sgr2(v[0], v[1]).ptr;
+	return sgr_gmk_alloc(v[0], v[1]).ptr;
 }
 
 static char *
@@ -225,20 +306,22 @@ msg (useless char const  *f,
 	if (!pfx_ptr)
 		return nullptr;
 
-	size_t size = sizeof "$(info $(_pfx))" + pfx_len.n_bytes
-	            + string_length(v[1]).n_bytes;
+	struct len txt_len = string_length(v[1]);
+	struct loc256 loc = loc256(&loc);
+	if (!buf_prealloc(&loc.b,
+		sizeof "$(info $(" /* pfx */ "_pfx)" /* txt */ ")"
+		+ pfx_len.n_bytes + txt_len.n_bytes))
+		return nullptr;
 
-	char buf[1024];
-	char *ptr = size > sizeof buf ? malloc(size) : buf;
-	if (ptr) {
-		int len = snprintf(ptr, size, "$(info $(%.*s_pfx)%s)",
-		                  (int)pfx_len.n_bytes, pfx_ptr, v[1]);
-		if (len > 0 && (size_t)len == size - 1U)
-			gmk_eval(ptr, nullptr);
+	buf_append_literal_unsafe(&loc.b, "$(info $(");
+	buf_append_unsafe(&loc.b, pfx_ptr, &pfx_len);
+	buf_append_literal_unsafe(&loc.b, "_pfx)");
+	buf_append_unsafe(&loc.b, v[1], &txt_len);
+	buf_append_literal_unsafe(&loc.b, ")");
+	buf_terminate(&loc.b);
 
-		if (ptr != buf)
-			free(ptr);
-	}
+	gmk_eval(loc.b.ptr, nullptr);
+	loc256_fini(&loc);
 
 	return nullptr;
 }
@@ -248,8 +331,9 @@ register_msg (useless char const    *f,
               useless unsigned int   c,
               char                 **v)
 {
-	struct str sgr = sgr2(v[1], v[0]);
-	if (!sgr.ptr)
+	struct loc64 sgr = loc64(&sgr);
+	sgr_buf(&sgr.b, v[1], v[0]);
+	if (!sgr.b.ptr)
 		return nullptr;
 
 	char buf[256];
@@ -263,11 +347,11 @@ register_msg (useless char const    *f,
 	memcpy(buf, pfx_ptr, pfx_len.n_bytes);
 	memcpy(&buf[pfx_len.n_bytes], "_pfx", sizeof "_pfx");
 
-	char *arr[] = {buf, sgr.ptr};
+	char *arr[] = {buf, sgr.b.ptr};
 	lazy(nullptr, 2U, arr);
 
 done:
-	gmk_free(sgr.ptr);
+	loc64_fini(&sgr);
 	return nullptr;
 }
 
@@ -322,7 +406,6 @@ deem_gmk_setup (useless gmk_floc const *floc)
 	puts("\e[1;34md\e[m \e[1;36me\e[m \e[1;32me\e[m \e[1;33mm\e[m");
 	gmk_add_function("lazy", lazy, 2, 2, GMK_FUNC_NOEXPAND);
 	gmk_add_function("SGR", sgr, 2, 2, GMK_FUNC_NOEXPAND);
-	gmk_add_function("_SGR", sgr, 2, 2, GMK_FUNC_DEFAULT);
 	gmk_add_function("msg", msg, 2, 2, GMK_FUNC_DEFAULT);
 	gmk_add_function("register-msg", register_msg, 2, 2, GMK_FUNC_DEFAULT);
 	gmk_add_function("pfx-if", pfx_if, 2, 2, GMK_FUNC_NOEXPAND);
