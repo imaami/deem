@@ -271,6 +271,51 @@ done:
 	return nullptr;
 }
 
+static char *
+pfx_if (useless char const    *f,
+        useless unsigned int   c,
+        char                 **v)
+{
+	char *y = gmk_expand(v[1]);
+	if (!y)
+		return nullptr;
+
+	struct len n;
+	char const *rhs = strip_ws(y, &n);
+	if (!rhs) {
+		gmk_free(y);
+		return nullptr;
+	}
+
+	char *x = gmk_expand(v[0]);
+	if (x) do {
+		struct len m;
+		char const *lhs = strip_ws(x, &m);
+		if (!lhs) {
+			gmk_free(x);
+			break;
+		}
+
+		size_t len = m.n_bytes + n.n_bytes;
+		char *ret = gmk_alloc(len + 1U);
+		if (ret) {
+			memcpy(ret, lhs, m.n_bytes);
+			memcpy(&ret[m.n_bytes], rhs, n.n_bytes);
+			ret[len] = '\0';
+		}
+
+		gmk_free(x);
+		gmk_free(y);
+		return ret;
+	} while (0);
+
+	if (rhs != y)
+		(void)memmove(y, rhs, n.n_bytes);
+	y[n.n_bytes] = '\0';
+
+	return y;
+}
+
 int
 deem_gmk_setup (useless gmk_floc const *floc)
 {
@@ -280,6 +325,7 @@ deem_gmk_setup (useless gmk_floc const *floc)
 	gmk_add_function("_SGR", sgr, 2, 2, GMK_FUNC_DEFAULT);
 	gmk_add_function("msg", msg, 2, 2, GMK_FUNC_DEFAULT);
 	gmk_add_function("register-msg", register_msg, 2, 2, GMK_FUNC_DEFAULT);
+	gmk_add_function("pfx-if", pfx_if, 2, 2, GMK_FUNC_NOEXPAND);
 
 	register_msg(nullptr, 2U, (char *[]){"CC      ", "0;36"});
 	register_msg(nullptr, 2U, (char *[]){"CLEAN   ", "0;35"});
