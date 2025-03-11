@@ -400,10 +400,65 @@ pfx_if (useless char const    *f,
 	return y;
 }
 
+static char *
+library (useless char const    *f,
+         useless unsigned int   c,
+         char                 **v)
+{
+	if (c < 2U || !v[0] || !v[1])
+		return nullptr;
+
+	struct len name_len;
+	char const *name_ptr = strip_ws(v[0], &name_len);
+	if (!name_ptr)
+		return nullptr;
+
+	struct len src_len;
+	char const *src_ptr = strip_ws(v[1], &src_len);
+	if (!src_ptr)
+		return nullptr;
+
+	size_t size = sizeof "all:| "/* name */"\n"
+	                   "clean:| clean-"/* name */"\n"
+	                 "install:| install-"/* name */"\n"
+	                 "PHONY: "/* name */" clean-"/* name */" install-"/* name */"\n"
+	                 "override PUBLISH+="/* name */" clean-"/* name */" install-"/* name */"\n"
+	                 "override SRC_"/* name */":="/* src */"\n" + (10U * name_len.n_bytes) + src_len.n_bytes + 1U;
+	char *buf = malloc(size);
+	if (!buf) {
+		perror("malloc");
+		return nullptr;
+	}
+	(void)snprintf(buf, size, "all:| %s\n"
+	               "clean:| clean-%s\n"
+	               "install:| install-%s\n"
+	               "PHONY: %s clean-%s install-%s\n"
+	               "override PUBLISH+=%s clean-%s install-%s\n"
+	               "override SRC_%s:=%s\n", name_ptr, name_ptr, name_ptr, name_ptr, name_ptr, name_ptr, name_ptr, name_ptr, name_ptr, name_ptr, src_ptr);
+	gmk_eval(buf, nullptr);
+	free(buf);
+	return nullptr;
+}
+
+
 int
 deem_gmk_setup (useless gmk_floc const *floc)
 {
 	puts("\e[1;34md\e[m \e[1;36me\e[m \e[1;32me\e[m \e[1;33mm\e[m");
+
+	gmk_eval("override THIS_DIR := $(dir $(realpath $(lastword $(MAKEFILE_LIST))))\n"
+	         "    all:| $(TARGETS)\n"
+	         "  clean:| $(TARGETS:%=clean-%)\n"
+	         "install:| $(TARGETS:%=install-%)\n"
+	         "override PUBLISH :=            \\\n"
+	         "      all $(TARGETS)           \\\n"
+	         "    clean $(TARGETS:%=clean-%) \\\n"
+	         "  install $(TARGETS:%=install-%)\n"
+	         ".PHONY: $(PUBLISH)\n"
+	         "override LIB_TGT := $(filter %.so,$(TARGETS))\n"
+	         "override EXE_TGT := $(TARGETS:%.so=)", nullptr);
+
+	gmk_add_function("library", library, 2, 0, GMK_FUNC_NOEXPAND);
 	gmk_add_function("lazy", lazy, 2, 2, GMK_FUNC_NOEXPAND);
 	gmk_add_function("SGR", sgr, 2, 2, GMK_FUNC_NOEXPAND);
 	gmk_add_function("msg", msg, 2, 2, GMK_FUNC_DEFAULT);
@@ -419,6 +474,7 @@ deem_gmk_setup (useless gmk_floc const *floc)
 	register_msg(nullptr, 2U, (char *[]){"STRIP   ", "0;33"});
 	register_msg(nullptr, 2U, (char *[]){"SYMLINK ", "0;32"});
 	register_msg(nullptr, 2U, (char *[]){"YEET", "38;5;191"});
+
 	gmk_eval(".PHONY: yeet\nyeet:\n"
 	         "\t$(msg YEET,    \e[38;5;119m(╯°□°)╯︵ ┻━┻\e[m)@:\n"
 	         "clean:| yeet", nullptr);
