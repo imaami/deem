@@ -418,25 +418,53 @@ library (useless char const    *f,
 	if (!src_ptr)
 		return nullptr;
 
-	size_t size = sizeof "all:| "/* name */"\n"
-	                   "clean:| clean-"/* name */"\n"
-	                 "install:| install-"/* name */"\n"
-	                 "PHONY: "/* name */" clean-"/* name */" install-"/* name */"\n"
-	                 "override PUBLISH+="/* name */" clean-"/* name */" install-"/* name */"\n"
-	                 "override SRC_"/* name */":="/* src */"\n" + (10U * name_len.n_bytes) + src_len.n_bytes + 1U;
-	char *buf = malloc(size);
-	if (!buf) {
-		perror("malloc");
+	struct loc256 loc = loc256(&loc);
+	if (!buf_prealloc(&loc.b,
+		sizeof "    all:| "/* name */"\n"
+		       "  clean:| clean-"/* name */"\n"
+		       "install:| install-"/* name */"\n"
+		       ".PHONY: "/* name */" clean-"/* name */" install-"/* name */"\n"
+		       "override PUBLISH+="/* name */" clean-"/* name */" install-"/* name */"\n"
+		       "override SRC_"/* name */":="/* src */"\n"
+		       "ifneq (,$(filter "/* name */",$(or $(MAKECMDGOALS),all)))\n"
+		       "$(info "/* name */")\n"
+		       "endif"
+		       + (12U * name_len.n_bytes) + src_len.n_bytes))
 		return nullptr;
-	}
-	(void)snprintf(buf, size, "all:| %s\n"
-	               "clean:| clean-%s\n"
-	               "install:| install-%s\n"
-	               "PHONY: %s clean-%s install-%s\n"
-	               "override PUBLISH+=%s clean-%s install-%s\n"
-	               "override SRC_%s:=%s\n", name_ptr, name_ptr, name_ptr, name_ptr, name_ptr, name_ptr, name_ptr, name_ptr, name_ptr, name_ptr, src_ptr);
-	gmk_eval(buf, nullptr);
-	free(buf);
+
+	buf_append_literal_unsafe(&loc.b, "    all:| ");
+	buf_append_unsafe(&loc.b, name_ptr, &name_len);
+	buf_append_literal_unsafe(&loc.b, "\n  clean:| clean-");
+	buf_append_unsafe(&loc.b, name_ptr, &name_len);
+	buf_append_literal_unsafe(&loc.b, "\ninstall:| install-");
+	buf_append_unsafe(&loc.b, name_ptr, &name_len);
+	buf_append_literal_unsafe(&loc.b, "\n.PHONY: ");
+	buf_append_unsafe(&loc.b, name_ptr, &name_len);
+	buf_append_literal_unsafe(&loc.b, " clean-");
+	buf_append_unsafe(&loc.b, name_ptr, &name_len);
+	buf_append_literal_unsafe(&loc.b, " install-");
+	buf_append_unsafe(&loc.b, name_ptr, &name_len);
+	buf_append_literal_unsafe(&loc.b, "\noverride PUBLISH+=");
+	buf_append_unsafe(&loc.b, name_ptr, &name_len);
+	buf_append_literal_unsafe(&loc.b, " clean-");
+	buf_append_unsafe(&loc.b, name_ptr, &name_len);
+	buf_append_literal_unsafe(&loc.b, " install-");
+	buf_append_unsafe(&loc.b, name_ptr, &name_len);
+	buf_append_literal_unsafe(&loc.b, "\noverride SRC_");
+	buf_append_unsafe(&loc.b, name_ptr, &name_len);
+	buf_append_literal_unsafe(&loc.b, ":=");
+	buf_append_unsafe(&loc.b, src_ptr, &src_len);
+	buf_append_literal_unsafe(&loc.b, "\nifneq (,$(filter ");
+	buf_append_unsafe(&loc.b, name_ptr, &name_len);
+	buf_append_literal_unsafe(&loc.b, ",$(or $(MAKECMDGOALS),all)))\n");
+	buf_append_literal_unsafe(&loc.b, "$(info ");
+	buf_append_unsafe(&loc.b, name_ptr, &name_len);
+	buf_append_literal_unsafe(&loc.b, ")\nendif");
+	buf_terminate(&loc.b);
+	(void)fprintf(stderr, "\e[0;36m%s\e[m\n", loc.b.ptr);
+	gmk_eval(loc.b.ptr, nullptr);
+	loc256_fini(&loc);
+
 	return nullptr;
 }
 
@@ -444,19 +472,17 @@ library (useless char const    *f,
 int
 deem_gmk_setup (useless gmk_floc const *floc)
 {
-	puts("\e[1;34md\e[m \e[1;36me\e[m \e[1;32me\e[m \e[1;33mm\e[m");
+	puts("\e[0;36m┌───────╮\e[m\n"
+	     "\e[0;36m│"
+	     "\e[1;34md\e[m "
+	     "\e[1;36me\e[m "
+	     "\e[1;32me\e[m "
+	     "\e[1;33mm"
+	     "\e[0;36m│\e[m\n"
+	     "\e[0;36m╰───────┘\e[m");
 
-	gmk_eval("override THIS_DIR := $(dir $(realpath $(lastword $(MAKEFILE_LIST))))\n"
-	         "    all:| $(TARGETS)\n"
-	         "  clean:| $(TARGETS:%=clean-%)\n"
-	         "install:| $(TARGETS:%=install-%)\n"
-	         "override PUBLISH :=            \\\n"
-	         "      all $(TARGETS)           \\\n"
-	         "    clean $(TARGETS:%=clean-%) \\\n"
-	         "  install $(TARGETS:%=install-%)\n"
-	         ".PHONY: $(PUBLISH)\n"
-	         "override LIB_TGT := $(filter %.so,$(TARGETS))\n"
-	         "override EXE_TGT := $(TARGETS:%.so=)", nullptr);
+	gmk_eval("override THIS_DIR := "
+	         "$(dir $(realpath $(lastword $(MAKEFILE_LIST))))", nullptr);
 
 	gmk_add_function("library", library, 2, 0, GMK_FUNC_NOEXPAND);
 	gmk_add_function("lazy", lazy, 2, 2, GMK_FUNC_NOEXPAND);
@@ -475,9 +501,14 @@ deem_gmk_setup (useless gmk_floc const *floc)
 	register_msg(nullptr, 2U, (char *[]){"SYMLINK ", "0;32"});
 	register_msg(nullptr, 2U, (char *[]){"YEET", "38;5;191"});
 
-	gmk_eval(".PHONY: yeet\nyeet:\n"
+	gmk_eval(".PHONY: all\n"
+	         "all:; @:\n"
+	         "ifneq (.DEFAULT,$(MAKECMDGOALS))\n"
+	         "clean:| yeet\n"
+	         ".PHONY: yeet\n"
+	         "yeet:\n"
 	         "\t$(msg YEET,    \e[38;5;119m(╯°□°)╯︵ ┻━┻\e[m)@:\n"
-	         "clean:| yeet", nullptr);
+	         "endif", nullptr);
 
 	return 1;
 }

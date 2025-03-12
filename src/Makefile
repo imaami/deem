@@ -1,13 +1,18 @@
-#TARGETS := test
+override THIS_DIR := $(dir $(realpath $(lastword $(MAKEFILE_LIST))))
 
-# Show only main targets in tab completion.
+-load $(THIS_DIR)deem.so
+
 ifeq (.DEFAULT,$(MAKECMDGOALS))
--load deem.so
-deem.so:; +$(MAKE) -f $(THIS_DIR)deem.mk
+# This is a hack to build deem.so on tab-completion
+# without having it show up in the list of targets.
+$(if $(wildcard $(THIS_DIR)deem.so),,$(shell \
+  $(MAKE) -sf $(THIS_DIR)deem.mk deem.so >/dev/null >&2))
+else
+.PHONY: deem.so
+deem.so: $(THIS_DIR)deem.so; @:
+$(THIS_DIR)deem.so:; +$(MAKE) -f $(@:.so=.mk) $(@F)
 endif
 
-# Prevent tab-completion and direct build of sub-targets.
-ifneq (,$(filter $(PUBLISH),$(or $(MAKECMDGOALS),all)))
-test:
-	@echo "Hello, world!"
-endif
+$(library test.so, \
+  test.c           \
+)
