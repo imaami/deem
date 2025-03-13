@@ -109,6 +109,60 @@ struct str {
 	size_t len;
 };
 
+static bool
+deem_debug (void)
+{
+	static int debug_mk = 0;
+
+	if (!debug_mk) {
+		int debug_mk_ = -1;
+		char *str = gmk_expand("$(DEBUG_MK)");
+		if (str) {
+			char const *p = str;
+			while (*p >= '\t' && (*p <= '\r' || *p == ' '))
+				++p;
+			if (*p == '1') do {
+				if (!*++p) {
+					debug_mk_ = 1;
+					break;
+				}
+			} while (*p >= '\t' && (*p <= '\r' || *p == ' '));
+			gmk_free(str);
+		}
+
+		debug_mk = debug_mk_;
+	}
+
+	return debug_mk == 1;
+}
+
+static void
+deem_eval (char const *const str)
+{
+	if (deem_debug()) {
+		static unsigned c = 0;
+		unsigned c_ = (c++ & 0x7fU) + 0x60U;
+		char const *begin = str;
+		for (size_t i = 0; *begin; ++i) {
+			char const *end = strpbrk(begin, "\n\r");
+			int line = end ? (int)(end - begin) : -1;
+			bool last = !end || (*end == '\r' && !*++end);
+			(void)fprintf(stderr, "\e[38;5;%um%s\e[m", c_,
+			              i ? (last ? " └─" : " ├─")
+			                : (last ? "───" : "─┬─"));
+			if (line < 0) {
+				(void)fprintf(stderr, " %s\n", begin);
+				break;
+			}
+			(void)fprintf(stderr, " %.*s\n", line, begin);
+			if (last)
+				break;
+			begin = &end[1];
+		}
+	}
+	gmk_eval(str, nullptr);
+}
+
 static char const *
 strip_ws (char const *str,
           struct len *len);
@@ -176,7 +230,7 @@ lazy_ (struct buf *buf,
 	buf_append_literal_unsafe(buf, ")");
 	buf_terminate(buf);
 
-	gmk_eval(buf->ptr, nullptr);
+	deem_eval(buf->ptr);
 }
 
 static char *
@@ -320,7 +374,7 @@ msg (useless char const  *f,
 	buf_append_literal_unsafe(&loc.b, ")");
 	buf_terminate(&loc.b);
 
-	gmk_eval(loc.b.ptr, nullptr);
+	deem_eval(loc.b.ptr);
 	loc256_fini(&loc);
 
 	return nullptr;
@@ -423,14 +477,28 @@ library (useless char const    *f,
 		sizeof "    all:| "/* name */"\n"
 		       "  clean:| clean-"/* name */"\n"
 		       "install:| install-"/* name */"\n"
-		       ".PHONY: "/* name */" clean-"/* name */" install-"/* name */"\n"
-		       "override PUBLISH+="/* name */" clean-"/* name */" install-"/* name */"\n"
+		       ".PHONY: all "/* name */" clean-"/* name */" install-"/* name */"\n"
+		       "ifneq (,$(filter "/* name */" clean-"/* name */" install-"/* name */",$(or $(MAKECMDGOALS),all)))\n"
 		       "override SRC_"/* name */":="/* src */"\n"
-		       "ifneq (,$(filter "/* name */",$(or $(MAKECMDGOALS),all)))\n"
-		       "$(info "/* name */")\n"
-		       "endif"
-		       + (12U * name_len.n_bytes) + src_len.n_bytes))
+		       "override OBJ_"/* name */":=$(SRC_"/* name */":%=%.o-fpic)\n"
+		       /* name */": $(THIS_DIR)"/* name */"\n"
+		       "$(THIS_DIR)"/* name */": $(OBJ_"/* name */":%=$(THIS_DIR)%)\n"
+		       "\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -shared -o $@ -MMD $^\n"
+		       "%.c.o-fpic: %.c\n"
+		       "\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -c"   " -o $@ -MMD $<\n"
+		       "endif\n.DEFAULT_GOAL := all\n"
+		       + (16U * name_len.n_bytes) + src_len.n_bytes))
 		return nullptr;
+//deem.so: $(THIS_DIR)deem.so
+
+//$(THIS_DIR)deem.so: $(OBJ_deem.so:%=$(THIS_DIR)%)
+//	@+$(CC) $(CFLAGS) $(CFLAGS_deem.so) -shared -o $@ -MMD $^
+
+//%.c.o-fpic: %.c
+//	@+$(CC) $(CFLAGS) $(CFLAGS_deem.so) -o $@ -c -MMD $<
+
+//clean-deem.so:
+//	@rm -f $(@:clean-%=$(THIS_DIR)%) $(OBJ_deem.so:%=$(THIS_DIR)%)
 
 	buf_append_literal_unsafe(&loc.b, "    all:| ");
 	buf_append_unsafe(&loc.b, name_ptr, &name_len);
@@ -438,51 +506,67 @@ library (useless char const    *f,
 	buf_append_unsafe(&loc.b, name_ptr, &name_len);
 	buf_append_literal_unsafe(&loc.b, "\ninstall:| install-");
 	buf_append_unsafe(&loc.b, name_ptr, &name_len);
-	buf_append_literal_unsafe(&loc.b, "\n.PHONY: ");
+	buf_append_literal_unsafe(&loc.b, "\n.PHONY: all ");
 	buf_append_unsafe(&loc.b, name_ptr, &name_len);
 	buf_append_literal_unsafe(&loc.b, " clean-");
 	buf_append_unsafe(&loc.b, name_ptr, &name_len);
 	buf_append_literal_unsafe(&loc.b, " install-");
 	buf_append_unsafe(&loc.b, name_ptr, &name_len);
-	buf_append_literal_unsafe(&loc.b, "\noverride PUBLISH+=");
+	buf_append_literal_unsafe(&loc.b, "\nifneq (,$(filter ");
 	buf_append_unsafe(&loc.b, name_ptr, &name_len);
 	buf_append_literal_unsafe(&loc.b, " clean-");
 	buf_append_unsafe(&loc.b, name_ptr, &name_len);
 	buf_append_literal_unsafe(&loc.b, " install-");
 	buf_append_unsafe(&loc.b, name_ptr, &name_len);
-	buf_append_literal_unsafe(&loc.b, "\noverride SRC_");
+	buf_append_literal_unsafe(&loc.b, ",$(or $(MAKECMDGOALS),all)))\noverride SRC_");
 	buf_append_unsafe(&loc.b, name_ptr, &name_len);
 	buf_append_literal_unsafe(&loc.b, ":=");
 	buf_append_unsafe(&loc.b, src_ptr, &src_len);
-	buf_append_literal_unsafe(&loc.b, "\nifneq (,$(filter ");
+	buf_append_literal_unsafe(&loc.b, "\noverride OBJ_");
 	buf_append_unsafe(&loc.b, name_ptr, &name_len);
-	buf_append_literal_unsafe(&loc.b, ",$(or $(MAKECMDGOALS),all)))\n");
-	buf_append_literal_unsafe(&loc.b, "$(info ");
+	buf_append_literal_unsafe(&loc.b, ":=$(SRC_");
 	buf_append_unsafe(&loc.b, name_ptr, &name_len);
-	buf_append_literal_unsafe(&loc.b, ")\nendif");
+	buf_append_literal_unsafe(&loc.b, ":%=%.o-fpic)\n");
+	buf_append_unsafe(&loc.b, name_ptr, &name_len);
+	buf_append_literal_unsafe(&loc.b, ": $(THIS_DIR)");
+	buf_append_unsafe(&loc.b, name_ptr, &name_len);
+	buf_append_literal_unsafe(&loc.b, "\n$(THIS_DIR)");
+	buf_append_unsafe(&loc.b, name_ptr, &name_len);
+	buf_append_literal_unsafe(&loc.b, ": $(OBJ_");
+	buf_append_unsafe(&loc.b, name_ptr, &name_len);
+	buf_append_literal_unsafe(&loc.b,
+		":%=$(THIS_DIR)%)\n"
+		"\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -shared -o $@ -MMD $^\n"
+		"%.c.o-fpic: %.c\n"
+		"\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -c -o $@ -MMD $<\n"
+		"endif\n.DEFAULT_GOAL := all\n"
+	);
 	buf_terminate(&loc.b);
-	(void)fprintf(stderr, "\e[0;36m%s\e[m\n", loc.b.ptr);
-	gmk_eval(loc.b.ptr, nullptr);
+	deem_eval(loc.b.ptr);
 	loc256_fini(&loc);
 
 	return nullptr;
 }
 
-
 int
 deem_gmk_setup (useless gmk_floc const *floc)
 {
-	puts("\e[0;36m┌───────╮\e[m\n"
-	     "\e[0;36m│"
-	     "\e[1;34md\e[m "
-	     "\e[1;36me\e[m "
-	     "\e[1;32me\e[m "
-	     "\e[1;33mm"
-	     "\e[0;36m│\e[m\n"
-	     "\e[0;36m╰───────┘\e[m");
 
-	gmk_eval("override THIS_DIR := "
-	         "$(dir $(realpath $(lastword $(MAKEFILE_LIST))))", nullptr);
+	if (deem_debug()) {
+		puts("\e[0;36m┌───────╮\e[m\n"
+		     "\e[0;36m│"
+		     "\e[1;34md\e[m "
+		     "\e[1;36me\e[m "
+		     "\e[1;32me\e[m "
+		     "\e[1;33mm"
+		     "\e[0;36m│\e[m\n"
+		     "\e[0;36m╰───────┘\e[m");
+	}
+
+	struct loc256 loc = loc256(&loc);
+	lazy_(&loc.b, "THIS_DIR",
+	      "$(dir $(realpath $(lastword $(MAKEFILE_LIST))))");
+	loc256_fini(&loc);
 
 	gmk_add_function("library", library, 2, 0, GMK_FUNC_NOEXPAND);
 	gmk_add_function("lazy", lazy, 2, 2, GMK_FUNC_NOEXPAND);
@@ -501,14 +585,12 @@ deem_gmk_setup (useless gmk_floc const *floc)
 	register_msg(nullptr, 2U, (char *[]){"SYMLINK ", "0;32"});
 	register_msg(nullptr, 2U, (char *[]){"YEET", "38;5;191"});
 
-	gmk_eval(".PHONY: all\n"
-	         "all:; @:\n"
-	         "ifneq (.DEFAULT,$(MAKECMDGOALS))\n"
-	         "clean:| yeet\n"
-	         ".PHONY: yeet\n"
-	         "yeet:\n"
-	         "\t$(msg YEET,    \e[38;5;119m(╯°□°)╯︵ ┻━┻\e[m)@:\n"
-	         "endif", nullptr);
+	deem_eval("ifneq (.DEFAULT,$(MAKECMDGOALS))\n"
+	          "clean:| yeet\n"
+	          ".PHONY: yeet\n"
+	          "yeet:\n"
+	          "\t$(msg YEET,    \e[38;5;119m(╯°□°)╯︵ ┻━┻\e[m)@:\n"
+	          "endif");
 
 	return 1;
 }

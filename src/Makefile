@@ -10,9 +10,9 @@ $(if $(wildcard $(THIS_DIR)deem.so),,$(shell \
 else
 .PHONY: deem.so
 deem.so: $(THIS_DIR)deem.so; @:
-$(THIS_DIR)deem.so:; +$(MAKE) -f $(@:.so=.mk) $(@F)
+$(THIS_DIR)deem.so:; @+$(MAKE) -f $(@:.so=.mk) $(@F)
 endif
 
-$(library test.so, \
-  test.c           \
+$(library hello.so, \
+  hello.c           \
 )
