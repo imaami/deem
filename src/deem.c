@@ -95,17 +95,24 @@ loc64_fini (struct loc64 *const loc)
 }
 
 static force_inline void
-buf_append (struct buf *const buf,
-            char const *const str,
-            struct len *const len)
+buf_append_ (struct buf *const      buf,
+            char const *const       str,
+            struct len const *const len)
 {
 	__builtin_memcpy(&buf->str.mut[buf->str.len.n_bytes], str, len->n_bytes);
 	buf->str.len.n_bytes += len->n_bytes;
 	buf->str.len.n_chars += len->n_chars;
 }
 
+static force_inline void
+buf_append (struct buf *const       buf,
+            struct ref const *const ref)
+{
+	buf_append_(buf, ref->imm, &ref->len);
+}
+
 #define buf_append_literal(buf, lit) \
-	buf_append((buf), (lit), \
+	buf_append_((buf), (lit), \
 		&(struct len){ \
 			sizeof (lit) - 1U, \
 			sizeof (lit) - 1U \
@@ -250,13 +257,13 @@ lazy_ (struct buf *buf,
 		return;
 
 	buf_append_literal(buf, "override ");
-	buf_append(buf, var_ref.imm, &var_ref.len);
+	buf_append(buf, &var_ref);
 	buf_append_literal(buf, "=$(eval override ");
-	buf_append(buf, var_ref.imm, &var_ref.len);
+	buf_append(buf, &var_ref);
 	buf_append_literal(buf, ":=");
-	buf_append(buf, val_ref.imm, &val_ref.len);
+	buf_append(buf, &val_ref);
 	buf_append_literal(buf, ")$(");
-	buf_append(buf, var_ref.imm, &var_ref.len);
+	buf_append(buf, &var_ref);
 	buf_append_literal(buf, ")");
 	buf_terminate(buf);
 
@@ -334,9 +341,9 @@ sgr_gmk_alloc (char const *clr,
 		2U + clr_ref.len.n_bytes + 1U + txt_len.n_bytes + 3U + 1U);
 	if (buf.str.mut) {
 		buf_append_literal(&buf, "\e[");
-		buf_append(&buf, clr_ref.imm, &clr_ref.len);
+		buf_append(&buf, &clr_ref);
 		buf_append_literal(&buf, "m");
-		buf_append(&buf, txt, &txt_len);
+		buf_append_(&buf, txt, &txt_len);
 		buf_append_literal(&buf, "\e[m");
 		buf_terminate(&buf);
 	}
@@ -360,9 +367,9 @@ sgr_buf (struct buf *const buf,
 		return;
 
 	buf_append_literal(buf, "\e[");
-	buf_append(buf, clr_ref.imm, &clr_ref.len);
+	buf_append(buf, &clr_ref);
 	buf_append_literal(buf, "m");
-	buf_append(buf, txt, &txt_len);
+	buf_append_(buf, txt, &txt_len);
 	buf_append_literal(buf, "\e[m");
 	buf_terminate(buf);
 }
@@ -396,9 +403,9 @@ msg (useless char const  *f,
 		return nullptr;
 
 	buf_append_literal(&loc.b, "$(info $(");
-	buf_append(&loc.b, pfx_ref.imm, &pfx_ref.len);
+	buf_append(&loc.b, &pfx_ref);
 	buf_append_literal(&loc.b, "_pfx)");
-	buf_append(&loc.b, v[1], &txt_len);
+	buf_append_(&loc.b, v[1], &txt_len);
 	buf_append_literal(&loc.b, ")");
 	buf_terminate(&loc.b);
 
@@ -488,12 +495,12 @@ library (useless char const    *f,
 	if (c < 2U || !v[0] || !v[1])
 		return nullptr;
 
-	struct ref name_ref = trim(v[0]);
-	if (!name_ref.imm)
+	struct ref name = trim(v[0]);
+	if (!name.imm)
 		return nullptr;
 
-	struct ref src_ref = trim(v[1]);
-	if (!src_ref.imm)
+	struct ref src = trim(v[1]);
+	if (!src.imm)
 		return nullptr;
 
 	struct loc256 loc = loc256(&loc);
@@ -509,57 +516,83 @@ library (useless char const    *f,
 		       "$(THIS_DIR)"/* name */": $(OBJ_"/* name */":%=$(THIS_DIR)%)\n"
 		       "\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -shared -o $@ -MMD $^\n"
 		       "%.c.o-fpic: %.c\n"
-		       "\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -c"   " -o $@ -MMD $<\n"
+		       "\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -c -o $@ -MMD $<\n"
 		       "clean-"/* name */":\n"
-		       "\t@rm -f $(@:clean-%=$(THIS_DIR)%) $(OBJ_$(@:clean-%=%):%=$(THIS_DIR)%)\n"
+		       "\t@$(RM) $(@:clean-%=$(THIS_DIR)%) $(OBJ_$(@:clean-%=%):%=$(THIS_DIR)%)\n"
 		       "endif"
-		       + (17U * name_ref.len.n_bytes) + src_ref.len.n_bytes))
+		       + (17U * name.len.n_bytes) + src.len.n_bytes))
 		return nullptr;
 
+#define XLIBRARY(L, V, N) \
+L(".PHONY: ") V(name) L(" clean-") V(name) L(" install-") V(name) L("\n" \
+"all:| ") V(name) L("\n" \
+"clean:| clean-") V(name) L("\n" \
+"install:| install-") V(name) L("\n" \
+"override SRC_") V(name) L(":=") V(src) L("\n" \
+"override OBJ_") V(name) L(":=$(SRC_") V(name) L(":%=%.o-fpic)\n" \
+"ifneq (,$(filter all clean install ") V(name) L(" clean-") V(name) L(" install-") V(name) L(",$(or $(MAKECMDGOALS),all)))\n") \
+V(name) L(": $(THIS_DIR)") V(name) L("\n" \
+"$(THIS_DIR)") V(name) L(": $(OBJ_") V(name) L(":%=$(THIS_DIR)%)\n" \
+"\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -shared -o $@ -MMD $^\n" \
+"%.c.o-fpic: %.c\n" \
+"\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -c -o $@ -MMD $<\n" \
+"clean-") V(name) L(":\n" \
+"\t@$(RM) $(@:clean-%=$(THIS_DIR)%) $(OBJ_$(@:clean-%=%):%=$(THIS_DIR)%)\n" \
+"endif") N()
+
+#define L_(lit) buf_append_literal(&loc2.b, lit);
+#define V_(var) buf_append(&loc2.b, &var);
+#define N_() buf_terminate(&loc2.b)
+
+	struct loc256 loc2 = loc256(&loc2);
+	buf_reserve(&loc2.b, loc.b.cap);
+	XLIBRARY(L_, V_, N_);
+	(void)fprintf(stderr, "----\n%zu/%zu\n----\n%s\n----\n", loc2.b.str.len.n_bytes, loc2.b.cap, loc2.b.str.imm);
+
 	buf_append_literal(&loc.b, ".PHONY: ");
-	buf_append(&loc.b, name_ref.imm, &name_ref.len);
+	buf_append(&loc.b, &name);
 	buf_append_literal(&loc.b, " clean-");
-	buf_append(&loc.b, name_ref.imm, &name_ref.len);
+	buf_append(&loc.b, &name);
 	buf_append_literal(&loc.b, " install-");
-	buf_append(&loc.b, name_ref.imm, &name_ref.len);
+	buf_append(&loc.b, &name);
 	buf_append_literal(&loc.b, "\nall:| ");
-	buf_append(&loc.b, name_ref.imm, &name_ref.len);
+	buf_append(&loc.b, &name);
 	buf_append_literal(&loc.b, "\nclean:| clean-");
-	buf_append(&loc.b, name_ref.imm, &name_ref.len);
+	buf_append(&loc.b, &name);
 	buf_append_literal(&loc.b, "\ninstall:| install-");
-	buf_append(&loc.b, name_ref.imm, &name_ref.len);
+	buf_append(&loc.b, &name);
 	buf_append_literal(&loc.b, "\noverride SRC_");
-	buf_append(&loc.b, name_ref.imm, &name_ref.len);
+	buf_append(&loc.b, &name);
 	buf_append_literal(&loc.b, ":=");
-	buf_append(&loc.b, src_ref.imm, &src_ref.len);
+	buf_append(&loc.b, &src);
 	buf_append_literal(&loc.b, "\noverride OBJ_");
-	buf_append(&loc.b, name_ref.imm, &name_ref.len);
+	buf_append(&loc.b, &name);
 	buf_append_literal(&loc.b, ":=$(SRC_");
-	buf_append(&loc.b, name_ref.imm, &name_ref.len);
+	buf_append(&loc.b, &name);
 	buf_append_literal(&loc.b, ":%=%.o-fpic)\nifneq (,$(filter all clean install ");
-	buf_append(&loc.b, name_ref.imm, &name_ref.len);
+	buf_append(&loc.b, &name);
 	buf_append_literal(&loc.b, " clean-");
-	buf_append(&loc.b, name_ref.imm, &name_ref.len);
+	buf_append(&loc.b, &name);
 	buf_append_literal(&loc.b, " install-");
-	buf_append(&loc.b, name_ref.imm, &name_ref.len);
+	buf_append(&loc.b, &name);
 	buf_append_literal(&loc.b, ",$(or $(MAKECMDGOALS),all)))\n");
-	buf_append(&loc.b, name_ref.imm, &name_ref.len);
+	buf_append(&loc.b, &name);
 	buf_append_literal(&loc.b, ": $(THIS_DIR)");
-	buf_append(&loc.b, name_ref.imm, &name_ref.len);
+	buf_append(&loc.b, &name);
 	buf_append_literal(&loc.b, "\n$(THIS_DIR)");
-	buf_append(&loc.b, name_ref.imm, &name_ref.len);
+	buf_append(&loc.b, &name);
 	buf_append_literal(&loc.b, ": $(OBJ_");
-	buf_append(&loc.b, name_ref.imm, &name_ref.len);
+	buf_append(&loc.b, &name);
 	buf_append_literal(&loc.b,
 		":%=$(THIS_DIR)%)\n"
 		"\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -shared -o $@ -MMD $^\n"
 		"%.c.o-fpic: %.c\n"
 		"\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -c -o $@ -MMD $<\n"
 		"clean-");
-	buf_append(&loc.b, name_ref.imm, &name_ref.len);
+	buf_append(&loc.b, &name);
 	buf_append_literal(&loc.b,
 		":\n"
-		"\t@rm -f $(@:clean-%=$(THIS_DIR)%) $(OBJ_$(@:clean-%=%):%=$(THIS_DIR)%)\n"
+		"\t@$(RM) $(@:clean-%=$(THIS_DIR)%) $(OBJ_$(@:clean-%=%):%=$(THIS_DIR)%)\n"
 		"endif");
 	buf_terminate(&loc.b);
 	deem_eval(loc.b.str.mut);
