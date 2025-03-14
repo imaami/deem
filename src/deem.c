@@ -267,34 +267,43 @@ buf_gmk_alloc (size_t size)
 
 static void
 lazy_ (struct buf *buf,
-       char const *var,
-       char const *val)
+       char const *lhs,
+       char const *rhs)
 {
-	struct ref var_ref = trim(var);
-	if (!var_ref.imm)
+	struct ref var = trim(lhs);
+	if (!var.imm)
 		return;
 
-	struct ref val_ref = trim(val);
-	if (!val_ref.imm)
+	struct ref val = trim(rhs);
+	if (!val.imm)
 		return;
 
-	if (!buf_reserve(buf,
-		sizeof "override "/* var */"=$(eval override "
-		       /* var */":="/* val */")$("/* var */")"
-		+ (3U * var_ref.len.n_bytes)
-		+ val_ref.len.n_bytes))
+	#define XLAZY(L, V, N) L("override ") V(var) \
+	L("=$(eval override ") V(var) L(":=") V(val) \
+	L(")$(") V(var) L(")") N()
+
+	#define lit_(x) (sizeof x - 1U) +
+	#define var_(x) (x).len.n_bytes +
+	#define nul_()  1U
+
+	if (!buf_reserve(buf, XLAZY(lit_, var_, nul_)))
 		return;
 
-	buf_append_literal(buf, "override ");
-	buf_append(buf, &var_ref);
-	buf_append_literal(buf, "=$(eval override ");
-	buf_append(buf, &var_ref);
-	buf_append_literal(buf, ":=");
-	buf_append(buf, &val_ref);
-	buf_append_literal(buf, ")$(");
-	buf_append(buf, &var_ref);
-	buf_append_literal(buf, ")");
-	buf_terminate(buf);
+	#undef nul_
+	#undef var_
+	#undef lit_
+
+	#define lit_(x) buf_append_literal(buf, x);
+	#define var_(x) buf_append(buf, &x);
+	#define nul_()  buf_terminate(buf)
+
+	XLAZY(lit_, var_, nul_);
+
+	#undef nul_
+	#undef var_
+	#undef lit_
+
+	#undef XLAZY
 
 	deem_eval(buf->str.mut);
 }
@@ -532,47 +541,48 @@ library (useless char const    *f,
 	if (!src.imm)
 		return nullptr;
 
-#define XLIBRARY(L, V, N) \
-L(".PHONY: ") V(name) L(" clean-") V(name) L(" install-") V(name) L("\n" \
-"all:| ") V(name) L("\n" \
-"clean:| clean-") V(name) L("\n" \
-"install:| install-") V(name) L("\n" \
-"override SRC_") V(name) L(":=") V(src) L("\n" \
-"override OBJ_") V(name) L(":=$(SRC_") V(name) L(":%=%.o-fpic)\n" \
-"ifneq (,$(filter all clean install ") V(name) L(" clean-") V(name) L(" install-") V(name) L(",$(or $(MAKECMDGOALS),all)))\n") \
-V(name) L(": $(THIS_DIR)") V(name) L("\n" \
-"$(THIS_DIR)") V(name) L(": $(OBJ_") V(name) L(":%=$(THIS_DIR)%)\n" \
-"\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -shared -o $@ -MMD $^\n" \
-"%.c.o-fpic: %.c\n" \
-"\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -c -o $@ -MMD $<\n" \
-"clean-") V(name) L(":\n" \
-"\t@$(RM) $(@:clean-%=$(THIS_DIR)%) $(OBJ_$(@:clean-%=%):%=$(THIS_DIR)%)\n" \
-"endif") N()
+	#define XLIBRARY(L, V, N) \
+	L(".PHONY: ") V(name) L(" clean-") V(name) L(" install-") V(name) L("\n" \
+	"all:| ") V(name) L("\n" \
+	"clean:| clean-") V(name) L("\n" \
+	"install:| install-") V(name) L("\n\n" \
+	"override SRC_") V(name) L(":=") V(src) L("\n" \
+	"override OBJ_") V(name) L(":=$(SRC_") V(name) L(":%=%.o-fpic)\n" \
+	"override DEP_") V(name) L(":=$(SRC_") V(name) L(":%=%.d)\n\n" \
+	"ifneq (,$(filter all clean install ") V(name) L(" clean-") V(name) L(" install-") V(name) L(",$(or $(MAKECMDGOALS),all)))\n") \
+	V(name) L(": $(THIS_DIR)") V(name) L("\n" \
+	"$(THIS_DIR)") V(name) L(": $(OBJ_") V(name) L(":%=$(THIS_DIR)%)\n" \
+	"\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -shared -o $@ -MMD $^\n\n" \
+	"%.c.o-fpic: %.c\n" \
+	"\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -c -o $@ -MMD $<\n\n" \
+	"clean-") V(name) L(":\n" \
+	"\t@$(RM) $(@:clean-%=$(THIS_DIR)%) $(OBJ_$(@:clean-%=%):%=$(THIS_DIR)%) $(DEP_$(@:clean-%=%):%=$(THIS_DIR)%)\n\n" \
+	"-include $(DEP_") V(name) L(":%=$(THIS_DIR)%)\n" \
+	"endif") N()
+
+	#define lit_(x) (sizeof x - 1U) +
+	#define var_(x) (x).len.n_bytes +
+	#define nul_()  1U
 
 	struct loc1024 loc = loc1024(&loc);
-
-	#define plus(x) + (x).len.n_bytes
-	#define show(...) __VA_ARGS__
-	#define hide(...)
-
-	if (!buf_reserve(&loc.b,
-	                 sizeof XLIBRARY(show, hide, hide)
-	                        XLIBRARY(hide, plus, hide)))
+	if (!buf_reserve(&loc.b, XLIBRARY(lit_, var_, nul_)))
 		return nullptr;
 
-	#undef hide
-	#undef show
-	#undef plus
+	#undef nul_
+	#undef var_
+	#undef lit_
 
-	#define L_(lit) buf_append_literal(&loc.b, lit);
-	#define V_(var) buf_append(&loc.b, &var);
-	#define N_() buf_terminate(&loc.b)
+	#define lit_(x) buf_append_literal(&loc.b, x);
+	#define var_(x) buf_append(&loc.b, &x);
+	#define nul_()  buf_terminate(&loc.b)
 
-	XLIBRARY(L_, V_, N_);
+	XLIBRARY(lit_, var_, nul_);
 
-	#undef N_
-	#undef V_
-	#undef L_
+	#undef nul_
+	#undef var_
+	#undef lit_
+
+	#undef XLIBRARY
 
 	deem_eval(loc.b.str.mut);
 	loc1024_fini(&loc);
