@@ -16,6 +16,9 @@ struct len {
 	size_t n_chars; //< String length in Unicode characters
 };
 
+static struct len
+string_length (char const *str);
+
 /** @brief String pointer + length in bytes and Unicode characters
  */
 struct ref {
@@ -25,6 +28,15 @@ struct ref {
 	};
 	struct len len;
 };
+
+static force_inline struct ref
+ref (char const *const str)
+{
+	return (struct ref){
+		.imm = str,
+		.len = string_length(str)
+	};
+}
 
 /** @brief String buffer
  */
@@ -47,9 +59,6 @@ struct loc64 {
 	struct buf b;
 	char       d[64U - sizeof(struct buf)];
 };
-
-static struct len
-string_length (char const *str);
 
 static force_inline struct loc1024
 loc1024 (struct loc1024 *const loc)
@@ -433,17 +442,17 @@ msg (useless char const  *f,
 	if (!pfx_ref.imm)
 		return nullptr;
 
-	struct len txt_len = string_length(v[1]);
+	struct ref txt_ref = ref(v[1]);
 	struct loc64 loc = loc64(&loc);
 	if (!buf_reserve(&loc.b,
 		sizeof "$(info $(" /* pfx */ "_pfx)" /* txt */ ")"
-		+ pfx_ref.len.n_bytes + txt_len.n_bytes))
+		+ pfx_ref.len.n_bytes + txt_ref.len.n_bytes))
 		return nullptr;
 
 	buf_append_literal(&loc.b, "$(info $(");
 	buf_append(&loc.b, &pfx_ref);
 	buf_append_literal(&loc.b, "_pfx)");
-	buf_append_(&loc.b, v[1], &txt_len);
+	buf_append_(&loc.b, txt_ref.imm, &txt_ref.len);
 	buf_append_literal(&loc.b, ")");
 	buf_terminate(&loc.b);
 
