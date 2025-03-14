@@ -18,10 +18,9 @@ $(THIS_DIR)deem.so: $(OBJ_deem.so:%=$(THIS_DIR)%)
 	@+$(CC) $(CFLAGS) $(CFLAGS_deem.so) -o $@ -c -MMD $<
 
 clean-deem.so:
-	@rm -f $(@:clean-%=$(THIS_DIR)%) $(OBJ_$(@:clean-%=%):%=$(THIS_DIR)%)
+	@$(RM) $(@:clean-%=$(THIS_DIR)%) $(OBJ_$(@:clean-%=%):%=$(THIS_DIR)%)
 
 .PHONY: deem.so clean-deem.so
 
--include $(DEP_deem.so)
-
+-include $(DEP_deem.so:%=$(THIS_DIR)%)
 endif
