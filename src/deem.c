@@ -17,7 +17,7 @@ struct len {
 };
 
 static struct len
-string_length (char const *str);
+len (char const *str);
 
 /** @brief String pointer + length in bytes and Unicode characters
  */
@@ -34,7 +34,7 @@ ref (char const *const str)
 {
 	return (struct ref){
 		.imm = str,
-		.len = string_length(str)
+		.len = len(str)
 	};
 }
 
@@ -368,7 +368,7 @@ sgr2 (char const *clr,
 {
 	struct ref clr_ref = trim(clr);
 	if (clr_ref.imm)
-		return sgr2_(clr_ref.imm, clr_ref.len, txt, string_length(txt));
+		return sgr2_(clr_ref.imm, clr_ref.len, txt, len(txt));
 	return (struct str){nullptr, 0U};
 }
 
@@ -380,7 +380,7 @@ sgr_gmk_alloc (char const *clr,
 	if (!clr_ref.imm)
 		return (struct buf){nullptr};
 
-	struct len txt_len = string_length(txt);
+	struct len txt_len = len(txt);
 		return (struct buf){nullptr};
 
 	struct buf buf = buf_gmk_alloc(
@@ -407,7 +407,7 @@ sgr_buf (struct buf *const buf,
 	if (!clr_ref.imm)
 		return;
 
-	struct len txt_len = string_length(txt);
+	struct len txt_len = len(txt);
 	if (!buf_reserve(buf,
 		/* "\e[" <clr>         "m"  <txt>         "\e[m" <NUL> */
 		2U + clr_ref.len.n_bytes + 1U + txt_len.n_bytes + 3U + 1U))
@@ -514,12 +514,12 @@ pfx_if (useless char const    *f,
 			break;
 		}
 
-		size_t len = lhs.len.n_bytes + rhs.len.n_bytes;
-		char *ret = gmk_alloc(len + 1U);
+		size_t n = lhs.len.n_bytes + rhs.len.n_bytes;
+		char *ret = gmk_alloc(n + 1U);
 		if (ret) {
 			__builtin_memcpy(ret, lhs.imm, lhs.len.n_bytes);
 			__builtin_memcpy(&ret[lhs.len.n_bytes], rhs.imm, rhs.len.n_bytes);
-			ret[len] = '\0';
+			ret[n] = '\0';
 		}
 
 		gmk_free(lhs_str);
@@ -542,6 +542,11 @@ library (useless char const    *f,
 	if (c < 2U || !v[0] || !v[1])
 		return nullptr;
 
+	struct library_args {
+		struct ref pos[2];
+		bool install;
+	} args = {0};
+
 	struct ref name = trim(v[0]);
 	if (!name.imm)
 		return nullptr;
@@ -550,23 +555,36 @@ library (useless char const    *f,
 	if (!src.imm)
 		return nullptr;
 
-	#define XLIBRARY(L, V, N) \
-	L(".PHONY: ") V(name) L(" clean-") V(name) L(" install-") V(name) L("\n" \
-	"all:| ") V(name) L("\n" \
-	"clean:| clean-") V(name) L("\n" \
-	"install:| install-") V(name) L("\n\n" \
-	"override SRC_") V(name) L(":=") V(src) L("\n" \
-	"override OBJ_") V(name) L(":=$(SRC_") V(name) L(":%=%.o-fpic)\n" \
-	"override DEP_") V(name) L(":=$(SRC_") V(name) L(":%=%.d)\n\n" \
-	"ifneq (,$(filter all clean install ") V(name) L(" clean-") V(name) L(" install-") V(name) L(",$(or $(MAKECMDGOALS),all)))\n") \
-	V(name) L(": $(THIS_DIR)") V(name) L("\n" \
-	"$(THIS_DIR)") V(name) L(": $(OBJ_") V(name) L(":%=$(THIS_DIR)%)\n" \
-	"\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -shared -o $@ -MMD $^\n\n" \
+	#define XLIBRARY(NAME, SRC, L, V, N) \
+	L(".PHONY: ") V(NAME) L(" clean-") V(NAME) L(" install-") V(NAME) L("\n" \
+	"all:| ") V(NAME) L("\n" \
+	"clean:| clean-") V(NAME) L("\n" \
+	"install:| install-") V(NAME) L("\n\n" \
+	"override SRC_") V(NAME) L(":=") V(SRC) L("\n" \
+	"override OBJ_") V(NAME) L(":=$(SRC_") V(NAME) L(":%=%.o-fpic)\n" \
+	"override DEP_") V(NAME) L(":=$(SRC_") V(NAME) L(":%=%.d)\n\n" \
+	"ifneq (,$(filter all ") V(NAME) L(",$(or $(MAKECMDGOALS),all)))\n" \
+	"$(info ") V(NAME) L(")\n") \
+	V(NAME) L(": $(THIS_DIR)") V(NAME) L("\n" \
+	"endif\n\n" \
+	"ifneq (,$(filter all install ") V(NAME) L(" install-") V(NAME) L(",$(or $(MAKECMDGOALS),all)))\n" \
+	"$(info $(THIS_DIR)") V(NAME) L(")\n" \
+	"$(THIS_DIR)") V(NAME) L(": $(OBJ_") V(NAME) L(":%=$(THIS_DIR)%)\n" \
+	"\t@+$(CC) $(CFLAGS) $(CFLAGS_") V(NAME) L(") -fPIC -shared -o $@ -MMD $^\n\n" \
 	"%.c.o-fpic: %.c\n" \
 	"\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -c -o $@ -MMD $<\n\n" \
-	"clean-") V(name) L(":\n" \
-	"\t@$(RM) $(@:clean-%=$(THIS_DIR)%) $(OBJ_$(@:clean-%=%):%=$(THIS_DIR)%) $(DEP_$(@:clean-%=%):%=$(THIS_DIR)%)\n\n" \
-	"-include $(DEP_") V(name) L(":%=$(THIS_DIR)%)\n" \
+	"-include $(DEP_") V(NAME) L(":%=$(THIS_DIR)%)\n" \
+	"endif\n\n" \
+	"ifneq (,$(filter clean clean-") V(NAME) L(",$(MAKECMDGOALS)))\n" \
+	"$(info clean-") V(NAME) L(")\n" \
+	"clean-") V(NAME) L(":\n"                                         \
+	"\t@$(RM) $(addprefix $(THIS_DIR),") V(NAME) L(" $(OBJ_") V(NAME) \
+	                       L(") $(DEP_") V(NAME) L("))\n"             \
+	"endif\n\n" \
+	"ifneq (,$(filter install install-") V(NAME) L(",$(MAKECMDGOALS)))\n" \
+	"$(info install-") V(NAME) L(")\n" \
+	"install-") V(NAME) L(": $(THIS_DIR)") V(NAME) L("\n" \
+	"\t@echo \"install $(THIS_DIR)") V(NAME) L("\"\n" \
 	"endif") N()
 
 	#define lit_(x) (sizeof x - 1U) +
@@ -574,7 +592,7 @@ library (useless char const    *f,
 	#define nul_()  1U
 
 	struct loc1024 loc = loc1024(&loc);
-	if (!buf_reserve(&loc.b, XLIBRARY(lit_, var_, nul_)))
+	if (!buf_reserve(&loc.b, XLIBRARY(name, src, lit_, var_, nul_)))
 		return nullptr;
 
 	#undef nul_
@@ -585,7 +603,7 @@ library (useless char const    *f,
 	#define var_(x) buf_append(&loc.b, &x);
 	#define nul_()  buf_terminate(&loc.b)
 
-	XLIBRARY(lit_, var_, nul_);
+	XLIBRARY(name, src, lit_, var_, nul_);
 
 	#undef nul_
 	#undef var_
@@ -693,20 +711,24 @@ end:
 }
 
 static struct len
-string_length (char const *str)
+len (char const *const str)
 {
-	struct len r = {0, 0};
-	struct utf8 u8p = utf8();
-	uint8_t const *p = (uint8_t const *)str;
-	for (uint8_t const *q = p; *q; q = p) {
-		p = utf8_parse_next_code_point(&u8p, q);
-		if (u8p.error) {
-			(void)fprintf(stderr, "UTF-8 error: %s\n",
+	if (str) {
+		struct len r = {0, 0};
+		struct utf8 u8p = utf8();
+		uint8_t const *p = (uint8_t const *)str;
+		for (uint8_t const *q = p; *q; q = p) {
+			p = utf8_parse_next_code_point(&u8p, q);
+			if (u8p.error) {
+				(void)fprintf(stderr, "UTF-8 error: %s\n",
 			              strerror(u8p.error));
-			return (struct len){0, 0};
+				goto fail;
+			}
+			r.n_bytes += utf8_size(&u8p);
+			r.n_chars++;
 		}
-		r.n_bytes += utf8_size(&u8p);
-		r.n_chars++;
+		return r;
 	}
-	return r;
+fail:
+	return (struct len){0, 0};
 }
