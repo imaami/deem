@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: LGPL-3.0-or-later */
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,7 +20,7 @@ struct len {
 static struct len
 len (char const *str);
 
-/** @brief String pointer + length in bytes and Unicode characters
+/** @brief String pointer + length in bytes + length in code points
  */
 struct ref {
 	union {
@@ -45,92 +46,39 @@ struct buf {
 	size_t     cap; //< Local or allocated size
 };
 
-struct loc1024 {
-	struct buf b;
-	char       d[1024U - sizeof(struct buf)];
-};
-
-struct loc256 {
-	struct buf b;
-	char       d[256U - sizeof(struct buf)];
-};
-
-struct loc64 {
-	struct buf b;
-	char       d[64U - sizeof(struct buf)];
-};
-
-static force_inline struct loc1024
-loc1024 (struct loc1024 *const loc)
-{
-	return (struct loc1024){
-		.b = {
-			.str = {
-				.mut = loc->d,
-				.len = {0, 0}
-			},
-			.cap = sizeof loc->d,
-		},
-		.d = {0}
-	};
+#define define_buf(N) \
+struct buf##N { \
+	struct buf b; \
+	char       d[N - sizeof(struct buf)]; \
+}; \
+static force_inline struct buf##N \
+buf##N (struct buf##N *const buf) \
+{ \
+	return (struct buf##N){ \
+		.b = { \
+			.str = { \
+				.mut = buf->d, \
+				.len = {0, 0} \
+			}, \
+			.cap = N - sizeof(struct buf) \
+		}, \
+		.d = {0} \
+	}; \
+} \
+static force_inline void \
+buf##N##_fini (struct buf##N *const buf) \
+{ \
+	if (buf->b.str.mut != buf->d) { \
+		free(buf->b.str.mut); \
+		*buf = buf##N(buf); \
+	} \
 }
 
-static force_inline struct loc256
-loc256 (struct loc256 *const loc)
-{
-	return (struct loc256){
-		.b = {
-			.str = {
-				.mut = loc->d,
-				.len = {0, 0}
-			},
-			.cap = sizeof loc->d,
-		},
-		.d = {0}
-	};
-}
+define_buf(64)
+define_buf(256)
+define_buf(1024)
 
-static force_inline struct loc64
-loc64 (struct loc64 *const loc)
-{
-	return (struct loc64){
-		.b = {
-			.str = {
-				.mut = loc->d,
-				.len = {0, 0}
-			},
-			.cap = sizeof loc->d,
-		},
-		.d = {0}
-	};
-}
-
-static force_inline void
-loc1024_fini (struct loc1024 *const loc)
-{
-	if (loc->b.str.mut != loc->d) {
-		free(loc->b.str.mut);
-		*loc = loc1024(loc);
-	}
-}
-
-static force_inline void
-loc256_fini (struct loc256 *const loc)
-{
-	if (loc->b.str.mut != loc->d) {
-		free(loc->b.str.mut);
-		*loc = loc256(loc);
-	}
-}
-
-static force_inline void
-loc64_fini (struct loc64 *const loc)
-{
-	if (loc->b.str.mut != loc->d) {
-		free(loc->b.str.mut);
-		*loc = loc64(loc);
-	}
-}
+#undef define_buf
 
 static force_inline void
 buf_append_ (struct buf *const      buf,
@@ -226,19 +174,29 @@ deem_eval (char const *const str)
 static struct ref
 trim (char const *str);
 
-static inline char const *
-strip_ws (char const *str,
-          struct len *len)
-{
-	struct ref ret = trim(str);
-	*len = ret.len;
-	return ret.imm;
-}
-
+/**
+ * @brief Check if the buffer has enough capacity, and allocate more
+ *        if it does not.
+ *
+ * This function does not resize an existing heap allocation. Trying
+ * to do so will result in the old allocation being leaked.
+ *
+ * The only valid use case is when `buf` is embedded in a size-typed
+ * stack buffer and `buf->str.mut` points at the attached storage of
+ * that stack buffer. See the `define_buf()` macro etc. for details.
+ *
+ * @param buf The buffer to check.
+ * @param size The required capacity.
+ * @return `true` if the buffer had enough capacity or an allocation
+ *         was made successfully, `false` otherwise.
+ */
 static bool
 buf_reserve (struct buf *const buf,
              size_t            size)
 {
+	assert(!buf->str.mut || buf->str.mut == (char *)&buf[1]);
+
+	// FIXME: needs overflow check
 	size += buf->str.len.n_bytes;
 	if (size > buf->cap) {
 		char *ptr = malloc(size);
@@ -263,12 +221,12 @@ buf_reserve (struct buf *const buf,
  * @return A `struct buf` containing the allocated buffer and its size.
  */
 static force_inline struct buf
-buf_gmk_alloc (size_t size)
+buf_gmk_alloc (size_t const size)
 {
 	return (struct buf){
 		.str = {
 			.mut = gmk_alloc(size),
-			.len = {0, 0}
+			.len = {0U, 0U}
 		},
 		.cap = size,
 	};
@@ -323,111 +281,69 @@ lazy (useless char const  *f,
       char               **v)
 {
 	if (c == 2U && v[0] && v[1]) {
-		struct loc256 loc = loc256(&loc);
+		struct buf256 loc = buf256(&loc);
 		lazy_(&loc.b, v[0], v[1]);
-		loc256_fini(&loc);
+		buf256_fini(&loc);
 	}
 
 	return nullptr;
 }
 
-static struct str
-sgr2_ (char const *clr,
-       struct len  clr_len,
-       char const *txt,
-       struct len  txt_len)
+static char *
+sgr_buf (char const *const color,
+         char const *const text,
+         struct buf *const loc_buf)
 {
-	//           "\e[" <color>           "m"  <text>         "\e[m" <NUL>
-	size_t size = 2U + clr_len.n_bytes + 1U + txt_len.n_bytes + 3U + 1U;
-	struct str s = {
-		.ptr = gmk_alloc(size),
-		.len = 0
-	};
-	if (s.ptr) {
-		s.ptr[0] = '\e';
-		s.ptr[1] = '[';
-		__builtin_memcpy(&s.ptr[2], clr, clr_len.n_bytes);
+	struct ref clr = trim(color);
+	if (!clr.imm)
+		return nullptr;
 
-		s.len = 2U + clr_len.n_bytes;
-		s.ptr[s.len++] = 'm';
+	struct ref txt = ref(text);
+	struct buf gmk_buf, *buf;
 
-		__builtin_memcpy(&s.ptr[s.len], txt, txt_len.n_bytes);
-		s.len += txt_len.n_bytes;
-		s.ptr[s.len++] = '\e';
-		s.ptr[s.len++] = '[';
-		s.ptr[s.len++] = 'm';
+	#define XSGR(CLR, TXT, L, V, N) \
+	L("\e[") V(CLR) L("m") V(TXT) L("\e[m") N()
 
-		s.ptr[s.len] = '\0';
-	}
-	return s;
-}
+	#define lit_(x) (sizeof x - 1U) +
+	#define var_(x) (x).len.n_bytes +
+	#define nul_()  1U
 
-static struct str
-sgr2 (char const *clr,
-      char const *txt)
-{
-	struct ref clr_ref = trim(clr);
-	if (clr_ref.imm)
-		return sgr2_(clr_ref.imm, clr_ref.len, txt, len(txt));
-	return (struct str){nullptr, 0U};
-}
-
-static struct buf
-sgr_gmk_alloc (char const *clr,
-               char const *txt)
-{
-	struct ref clr_ref = trim(clr);
-	if (!clr_ref.imm)
-		return (struct buf){nullptr};
-
-	struct len txt_len = len(txt);
-		return (struct buf){nullptr};
-
-	struct buf buf = buf_gmk_alloc(
-		/* "\e[" <clr>         "m"  <txt>         "\e[m" <NUL> */
-		2U + clr_ref.len.n_bytes + 1U + txt_len.n_bytes + 3U + 1U);
-	if (buf.str.mut) {
-		buf_append_literal(&buf, "\e[");
-		buf_append(&buf, &clr_ref);
-		buf_append_literal(&buf, "m");
-		buf_append_(&buf, txt, &txt_len);
-		buf_append_literal(&buf, "\e[m");
-		buf_terminate(&buf);
+	if (loc_buf) {
+		if (!buf_reserve(loc_buf, XSGR(clr, txt, lit_, var_, nul_)))
+			return nullptr;
+		buf = loc_buf;
+	} else {
+		gmk_buf = buf_gmk_alloc(XSGR(clr, txt, lit_, var_, nul_));
+		if (!gmk_buf.str.mut)
+			return nullptr;
+		buf = &gmk_buf;
 	}
 
-	return buf;
+	#undef nul_
+	#undef var_
+	#undef lit_
+
+	#define lit_(x) buf_append_literal(buf, x);
+	#define var_(x) buf_append(buf, &x);
+	#define nul_()  buf_terminate(buf)
+
+	XSGR(clr, txt, lit_, var_, nul_);
+
+	#undef nul_
+	#undef var_
+	#undef lit_
+
+	#undef XSGR
+
+	return buf->str.mut;
 }
-
-static void
-sgr_buf (struct buf *const buf,
-         char const *const clr,
-         char const *const txt)
-{
-	struct ref clr_ref = trim(clr);
-	if (!clr_ref.imm)
-		return;
-
-	struct len txt_len = len(txt);
-	if (!buf_reserve(buf,
-		/* "\e[" <clr>         "m"  <txt>         "\e[m" <NUL> */
-		2U + clr_ref.len.n_bytes + 1U + txt_len.n_bytes + 3U + 1U))
-		return;
-
-	buf_append_literal(buf, "\e[");
-	buf_append(buf, &clr_ref);
-	buf_append_literal(buf, "m");
-	buf_append_(buf, txt, &txt_len);
-	buf_append_literal(buf, "\e[m");
-	buf_terminate(buf);
-}
-
 
 static char *
 sgr (useless char const    *f,
      useless unsigned int   c,
      char                 **v)
 {
-	return sgr_gmk_alloc(v[0], v[1]).str.mut;
+	return sgr_buf(v[0], v[1], nullptr);
 }
 
 static char *
@@ -443,7 +359,7 @@ msg (useless char const  *f,
 		return nullptr;
 
 	struct ref txt_ref = ref(v[1]);
-	struct loc64 loc = loc64(&loc);
+	struct buf64 loc = buf64(&loc);
 	if (!buf_reserve(&loc.b,
 		sizeof "$(info $(" /* pfx */ "_pfx)" /* txt */ ")"
 		+ pfx_ref.len.n_bytes + txt_ref.len.n_bytes))
@@ -457,7 +373,7 @@ msg (useless char const  *f,
 	buf_terminate(&loc.b);
 
 	deem_eval(loc.b.str.mut);
-	loc64_fini(&loc);
+	buf64_fini(&loc);
 
 	return nullptr;
 }
@@ -467,27 +383,25 @@ register_msg (useless char const    *f,
               useless unsigned int   c,
               char                 **v)
 {
-	struct loc64 sgr = loc64(&sgr);
-	sgr_buf(&sgr.b, v[1], v[0]);
-	if (!sgr.b.str.mut)
+	struct buf64 sgr = buf64(&sgr);
+	if (!sgr_buf(v[1], v[0], &sgr.b))
 		return nullptr;
 
 	char buf[256];
 
-	struct len pfx_len;
-	char const *pfx_ptr = strip_ws(v[0], &pfx_len);
-	if (!pfx_ptr ||
-	    pfx_len.n_bytes > sizeof buf - sizeof "_pfx")
+	struct ref pfx_ref = trim(v[0]);
+	if (!pfx_ref.imm ||
+	    pfx_ref.len.n_bytes > sizeof buf - sizeof "_pfx")
 		goto done;
 
-	__builtin_memcpy(buf, pfx_ptr, pfx_len.n_bytes);
-	__builtin_memcpy(&buf[pfx_len.n_bytes], "_pfx", sizeof "_pfx");
+	__builtin_memcpy(buf, pfx_ref.imm, pfx_ref.len.n_bytes);
+	__builtin_memcpy(&buf[pfx_ref.len.n_bytes], "_pfx", sizeof "_pfx");
 
 	char *arr[] = {buf, sgr.b.str.mut};
 	lazy(nullptr, 2U, arr);
 
 done:
-	loc64_fini(&sgr);
+	buf64_fini(&sgr);
 	return nullptr;
 }
 
@@ -591,7 +505,7 @@ library (useless char const    *f,
 	#define var_(x) (x).len.n_bytes +
 	#define nul_()  1U
 
-	struct loc1024 loc = loc1024(&loc);
+	struct buf1024 loc = buf1024(&loc);
 	if (!buf_reserve(&loc.b, XLIBRARY(name, src, lit_, var_, nul_)))
 		return nullptr;
 
@@ -612,7 +526,7 @@ library (useless char const    *f,
 	#undef XLIBRARY
 
 	deem_eval(loc.b.str.mut);
-	loc1024_fini(&loc);
+	buf1024_fini(&loc);
 
 	return nullptr;
 }
@@ -632,10 +546,10 @@ deem_gmk_setup (useless gmk_floc const *floc)
 		     "\e[0;36m╰───────┘\e[m");
 	}
 
-	struct loc256 loc = loc256(&loc);
+	struct buf256 loc = buf256(&loc);
 	lazy_(&loc.b, "THIS_DIR",
 	      "$(dir $(realpath $(lastword $(MAKEFILE_LIST))))");
-	loc256_fini(&loc);
+	buf256_fini(&loc);
 
 	gmk_add_function("library", library, 2, 0, GMK_FUNC_NOEXPAND);
 	gmk_add_function("lazy", lazy, 2, 2, GMK_FUNC_NOEXPAND);
@@ -721,7 +635,7 @@ len (char const *const str)
 			p = utf8_parse_next_code_point(&u8p, q);
 			if (u8p.error) {
 				(void)fprintf(stderr, "UTF-8 error: %s\n",
-			              strerror(u8p.error));
+				              strerror(u8p.error));
 				goto fail;
 			}
 			r.n_bytes += utf8_size(&u8p);
