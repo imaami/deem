@@ -449,6 +449,49 @@ pfx_if (useless char const    *f,
 }
 
 static char *
+sfx_if (useless char const    *f,
+        useless unsigned int   c,
+        char                 **v)
+{
+	char *lhs_str = gmk_expand(v[0]);
+	if (!lhs_str)
+		return nullptr;
+
+	struct ref lhs = trim(lhs_str);
+	if (!lhs.imm) {
+		gmk_free(lhs_str);
+		return nullptr;
+	}
+
+	char *rhs_str = gmk_expand(v[1]);
+	if (rhs_str) do {
+		struct ref rhs = trim(rhs_str);
+		if (!rhs.imm) {
+			gmk_free(rhs_str);
+			break;
+		}
+
+		size_t n = lhs.len.n_bytes + rhs.len.n_bytes;
+		char *ret = gmk_alloc(n + 1U);
+		if (ret) {
+			__builtin_memcpy(ret, lhs.imm, lhs.len.n_bytes);
+			__builtin_memcpy(&ret[lhs.len.n_bytes], rhs.imm, rhs.len.n_bytes);
+			ret[n] = '\0';
+		}
+
+		gmk_free(lhs_str);
+		gmk_free(rhs_str);
+		return ret;
+	} while (0);
+
+	if (lhs.imm != (char const *)lhs_str)
+		(void)memmove(lhs_str, lhs.imm, lhs.len.n_bytes);
+	lhs_str[lhs.len.n_bytes] = '\0';
+
+	return lhs_str;
+}
+
+static char *
 library (useless char const    *f,
          useless unsigned int   c,
          char                 **v)
@@ -477,28 +520,30 @@ library (useless char const    *f,
 	"override SRC_") V(NAME) L(":=") V(SRC) L("\n" \
 	"override OBJ_") V(NAME) L(":=$(SRC_") V(NAME) L(":%=%.o-fpic)\n" \
 	"override DEP_") V(NAME) L(":=$(SRC_") V(NAME) L(":%=%.d)\n\n" \
-	"ifneq (,$(filter all ") V(NAME) L(",$(or $(MAKECMDGOALS),all)))\n" \
-	"$(info ") V(NAME) L(")\n") \
+	"ifneq (,$(filter all ") V(NAME) L(",$(or $(MAKECMDGOALS),all)))\n") \
 	V(NAME) L(": $(THIS_DIR)") V(NAME) L("\n" \
 	"endif\n\n" \
 	"ifneq (,$(filter all install ") V(NAME) L(" install-") V(NAME) L(",$(or $(MAKECMDGOALS),all)))\n" \
-	"$(info $(THIS_DIR)") V(NAME) L(")\n" \
 	"$(THIS_DIR)") V(NAME) L(": $(OBJ_") V(NAME) L(":%=$(THIS_DIR)%)\n" \
+	"\t$(msg LINK,") V(NAME) L(")\n" \
 	"\t@+$(CC) $(CFLAGS) $(CFLAGS_") V(NAME) L(") -fPIC -shared -o $@ -MMD $^\n\n" \
 	"%.c.o-fpic: %.c\n" \
+	"\t$(msg CC,$(@F))\n" \
 	"\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -c -o $@ -MMD $<\n\n" \
 	"-include $(DEP_") V(NAME) L(":%=$(THIS_DIR)%)\n" \
 	"endif\n\n" \
 	"ifneq (,$(filter clean clean-") V(NAME) L(",$(MAKECMDGOALS)))\n" \
-	"$(info clean-") V(NAME) L(")\n" \
-	"clean-") V(NAME) L(":\n"                                         \
-	"\t@$(RM) $(addprefix $(THIS_DIR),") V(NAME) L(" $(OBJ_") V(NAME) \
-	                       L(") $(DEP_") V(NAME) L("))\n"             \
+	"$(eval clean-") V(NAME) L(": $$(eval override WHAT_") V(NAME) L(" := $$$$(sort $$$$(wildcard " \
+	"$$(addprefix $$(THIS_DIR),") V(NAME) L(" $$(OBJ_") V(NAME) L(") $$(DEP_") V(NAME) L("))))))\n" \
+	"$(eval clean-") V(NAME) L(":;$$(if $$(WHAT_") V(NAME) L("),$$(msg YEET" \
+	",    \e[38;5;119m(╯°□°)╯︵ ┻━┻\e[m $$(WHAT_") V(NAME) L(":$$(THIS_DIR)%=%))" \
+	"\t@$$(RM) $$(WHAT_") V(NAME) L("),@:))\n" \
 	"endif\n\n" \
 	"ifneq (,$(filter install install-") V(NAME) L(",$(MAKECMDGOALS)))\n" \
-	"$(info install-") V(NAME) L(")\n" \
+	"$(eval install-") V(NAME) L(": override private DST_") V(NAME) L("=$(eval override private DST_") V(NAME) L(":=$$(if $$(DESTDIR),$$(DESTDIR:/=)/)$$(if $$(libdir),$$(libdir:/=)/)") V(NAME) L(".0)$(DST_") V(NAME) L("))\n" \
 	"install-") V(NAME) L(": $(THIS_DIR)") V(NAME) L("\n" \
-	"\t@echo \"install $(THIS_DIR)") V(NAME) L("\"\n" \
+	"\t$(msg INSTALL,$(DST_") V(NAME) L("))\n" \
+	"\t@install -DTsm 0644 $(THIS_DIR)") V(NAME) L(" $(DST_") V(NAME) L(")\n" \
 	"endif") N()
 
 	#define lit_(x) (sizeof x - 1U) +
@@ -534,7 +579,6 @@ library (useless char const    *f,
 int
 deem_gmk_setup (useless gmk_floc const *floc)
 {
-
 	if (deem_debug()) {
 		puts("\e[0;36m┌───────╮\e[m\n"
 		     "\e[0;36m│"
@@ -551,12 +595,18 @@ deem_gmk_setup (useless gmk_floc const *floc)
 	      "$(dir $(realpath $(lastword $(MAKEFILE_LIST))))");
 	buf256_fini(&loc);
 
+	deem_eval(".PHONY: all clean install\n"
+	          "all:; @:\n"
+	          "clean:; @:\n"
+	          "install:; @:\n");
+
 	gmk_add_function("library", library, 2, 0, GMK_FUNC_NOEXPAND);
 	gmk_add_function("lazy", lazy, 2, 2, GMK_FUNC_NOEXPAND);
 	gmk_add_function("SGR", sgr, 2, 2, GMK_FUNC_NOEXPAND);
 	gmk_add_function("msg", msg, 2, 2, GMK_FUNC_DEFAULT);
 	gmk_add_function("register-msg", register_msg, 2, 2, GMK_FUNC_DEFAULT);
 	gmk_add_function("pfx-if", pfx_if, 2, 2, GMK_FUNC_NOEXPAND);
+	gmk_add_function("sfx-if", sfx_if, 2, 2, GMK_FUNC_NOEXPAND);
 
 	register_msg(nullptr, 2U, (char *[]){"CC      ", "0;36"});
 	register_msg(nullptr, 2U, (char *[]){"CLEAN   ", "0;35"});
@@ -566,16 +616,6 @@ deem_gmk_setup (useless gmk_floc const *floc)
 	register_msg(nullptr, 2U, (char *[]){"LINK    ", "1;34"});
 	register_msg(nullptr, 2U, (char *[]){"STRIP   ", "0;33"});
 	register_msg(nullptr, 2U, (char *[]){"SYMLINK ", "0;32"});
-	register_msg(nullptr, 2U, (char *[]){"YEET", "38;5;191"});
-
-	deem_eval(".PHONY: all clean install\n"
-	          "all:; @:\n"
-	          "ifneq (.DEFAULT,$(MAKECMDGOALS))\n"
-	          ".PHONY: yeet\n"
-	          "clean:| yeet\n"
-	          "yeet:\n"
-	          "\t$(msg YEET,    \e[38;5;119m(╯°□°)╯︵ ┻━┻\e[m)@:\n"
-	          "endif");
 
 	return 1;
 }
