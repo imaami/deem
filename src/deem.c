@@ -715,3 +715,81 @@ len (char const *const str)
 fail:
 	return (struct len){0, 0};
 }
+
+static char *
+arg_var (useless char const  *f,
+         unsigned int         c,
+         char               **v)
+{
+	struct ref var = trim(v[0]);
+	if (!var.imm)
+		return nullptr;
+
+	struct ref def = c > 1U ? trim(v[1]) : (struct ref){
+		.imm = nullptr,
+		.len = {0U, 0U}
+	};
+
+/*
+override define arg_var
+  $(eval
+    ifeq (environment,$$(origin __default_$1))
+      # Unset the __default variable if it originates from the environment
+      # (because it's probably not shadowing a file variable).
+      $$(call warn-origin,__default_$1)
+      $$(if $$(DEBUG_MK),$$(info override undefine __default_$1 [$$(origin __default_$1)]))
+      override undefine __default_$1
+    else ifeq (,$$(filter file override undefined,$$(firstword $$(origin __default_$1))))
+      # Abort if __default might be a command line or environment override
+      # variable, as they can be used to mess with the build by clobbering
+      # non-override file vars.
+      $$(call fail-origin,__default_$1)
+    endif
+
+    ifeq (environment,$$(firstword $$(origin $1)))
+      # Unset the target variable if it originates from the environment.
+      $$(if $$(DEBUG_MK),$$(info override undefine $1 [$$(origin $1)]))
+      override undefine $1
+    else ifeq (default,$$(origin $1))
+      # The target variable is a make builtin default.
+      ifdef 2
+        # Explicit fallback takes precedence over a builtin default value.
+        $$(if $$(DEBUG_MK),$$(info override undefine $1 [default]))
+        override undefine $1
+      else ifneq (undefined,$$(origin __default_$1))
+        # The __default variable takes precedence over the builtin default.
+        $$(if $$(DEBUG_MK),$$(info override undefine $1 [$$(origin $1)]))
+        override undefine $1
+      endif
+    else ifneq (undefined,$$(origin $1))
+      # The target variable was set in the makefile or on the command line.
+      # Unset if it's empty, as we only accept nonempty argument variables
+      # from the user. To allow empty command line variables, __default_$1
+      # must be defined as empty (not undefined), and there must not be an
+      # explicit fallback.
+      ifeq (simple,$$(flavor $1))
+        ifeq (,$$(strip $$($1)))
+          $$(if $$(DEBUG_MK),$$(info override undefine $1 [$$(origin $1)]))
+          override undefine $1
+        endif
+      else ifeq (,$$(strip $$(value $1)))
+        $$(if $$(DEBUG_MK),$$(info override undefine $1 [$$(origin $1)]))
+        override undefine $1
+      endif
+    endif
+
+    ifeq (undefined,$$(origin $1))
+      # The target variable is undefined, i.e. we can modify it.
+      ifdef 2
+        $$(if $$(DEBUG_MK),$$(info override $1 = $$$$(eval override $1 := $$(value 2))$$$$($1)))
+        override $1 = $$(eval override $1 := $(value 2))$$($1)
+      else ifneq (undefined,$$(origin __default_$1))
+        $$(if $$(DEBUG_MK),$$(info override $1 = $$$$(eval override $1 := $$(value __default_$1))$$$$($1)))
+        override $1 = $$(eval override $1 := $$(value __default_$1))$$($1)
+      endif
+    endif
+  )
+endef
+*/
+	return nullptr;
+}
