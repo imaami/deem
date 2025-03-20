@@ -410,15 +410,42 @@ enum side {
 	right_side
 };
 
+/**
+ * @brief Expand, trim, and concatenate two strings if one of them is
+ *        non-empty after expansion and trimming.
+ *
+ * This is the underlying implementation for the `$(pfx-if a,b)` and
+ * `$(sfx-if a,b)` functions. If `side` is `left_side`, concatenation
+ * is done iff `argv[0]` is non-empty after expansion and trimming;
+ * otherwise if `side` is `right_side`, concatenation is done iff
+ * `argv[1]` is non-empty after expansion and trimming. The opposite
+ * side argument isn't required to be non-empty.
+ *
+ * If the argument indicated by `side` is empty after expansion and
+ * trimming, the result is `nullptr`. If the argument indicated by
+ * `side` is non-empty, but the other argument is empty, the result
+ * is simply the non-empty argument after expansion and trimming.
+ *
+ * If the result is not null, the caller is responsible for freeing
+ * it with `gmk_free()`.
+ *
+ * @param argv The arguments to the `cat-if` function.
+ * @param side The side to concatenate.
+ * @return A pointer to the concatenated string, or `nullptr` if the
+ *         argument indicated by `side` is empty after expansion and
+ *         trimming.
+ */
 static char *
 cat_if (char      **argv,
         enum side   side)
 {
+	// Expand the argument indicated by `side`.
 	char *str[] = {nullptr, nullptr};
 	str[side] = gmk_expand(argv[side]);
 	if (!str[side])
 		return nullptr;
 
+	// Trim the expanded argument indicated by `side`.
 	struct ref ref[] = {{nullptr}, {nullptr}};
 	ref[side] = trim(str[side]);
 	if (!ref[side].imm) {
@@ -434,26 +461,37 @@ cat_if (char      **argv,
 			break;
 		}
 
-		size_t n = ref[left_side].len.n_bytes +
-		           ref[right_side].len.n_bytes;
-		char *ret = gmk_alloc(n + 1U);
-		if (ret) {
-			__builtin_memcpy(ret, ref[left_side].imm,
-			                 ref[left_side].len.n_bytes);
-			__builtin_memcpy(&ret[ref[left_side].len.n_bytes],
-			                 ref[right_side].imm,
-			                 ref[right_side].len.n_bytes);
-			ret[n] = '\0';
+		struct ref const *const lhs = &ref[left_side];
+		struct ref const *const rhs = &ref[right_side];
+		size_t n = lhs->len.n_bytes + rhs->len.n_bytes;
+		char *r = gmk_alloc(n + 1U);
+		if (r) {
+			(void)__builtin_memcpy(r, lhs->imm, lhs->len.n_bytes);
+			(void)__builtin_memcpy(&r[lhs->len.n_bytes], rhs->imm,
+			                       rhs->len.n_bytes);
+			r[n] = '\0';
 		}
 
 		gmk_free(str[left_side]);
 		gmk_free(str[right_side]);
-		return ret;
+		return r;
 	} while (0);
 
+	/* If the other argument was empty, and the argument indicated by
+	 * `side` was non-empty, we simply return the buffer allocated by
+	 * `gmk_expand()` for the non-empty argument. This requires us to
+	 * deal with possible leading whitespace.
+	 *
+	 * Because we return the trimmed result, the non-whitespace bytes
+	 * must start at the beginning of the buffer for the caller to be
+	 * able to call `gmk_free()` on it. So, first we have to check if
+	 * the trimmed content bytes start at an offset, and move them to
+	 * the beginning if they do.
+	 */
+
 	if (ref[side].imm != (char const *)str[side])
-		(void)memmove(str[side], ref[side].imm,
-		              ref[side].len.n_bytes);
+		(void)__builtin_memmove(str[side], ref[side].imm,
+		                        ref[side].len.n_bytes);
 	str[side][ref[side].len.n_bytes] = '\0';
 
 	return str[side];
@@ -500,29 +538,36 @@ library (useless char const    *f,
 	L(".PHONY: ") V(NAME) L(" clean-") V(NAME) L(" install-") V(NAME) L("\n" \
 	"all:| ") V(NAME) L("\n" \
 	"clean:| clean-") V(NAME) L("\n" \
-	"install:| install-") V(NAME) L("\n\n" \
+	"install:| install-") V(NAME) L("\n" \
+	"\n" \
 	"override SRC_") V(NAME) L(":=") V(SRC) L("\n" \
 	"override OBJ_") V(NAME) L(":=$(SRC_") V(NAME) L(":%=%.o-fpic)\n" \
-	"override DEP_") V(NAME) L(":=$(SRC_") V(NAME) L(":%=%.d)\n\n" \
+	"override DEP_") V(NAME) L(":=$(SRC_") V(NAME) L(":%=%.d)\n" \
+	"\n" \
 	"ifneq (,$(filter all ") V(NAME) L(",$(or $(MAKECMDGOALS),all)))\n") \
 	V(NAME) L(": $(THIS_DIR)") V(NAME) L("\n" \
-	"endif\n\n" \
+	"endif\n" \
+	"\n" \
 	"ifneq (,$(filter all install ") V(NAME) L(" install-") V(NAME) L(",$(or $(MAKECMDGOALS),all)))\n" \
 	"$(THIS_DIR)") V(NAME) L(": $(OBJ_") V(NAME) L(":%=$(THIS_DIR)%)\n" \
 	"\t$(msg LINK,") V(NAME) L(")\n" \
-	"\t@+$(CC) $(CFLAGS) $(CFLAGS_") V(NAME) L(") -fPIC -shared -o $@ -MMD $^\n\n" \
+	"\t@+$(CC) $(CFLAGS) $(CFLAGS_") V(NAME) L(") -fPIC -shared -o $@ -MMD $^\n" \
+	"\n" \
 	"%.c.o-fpic: %.c\n" \
 	"\t$(msg CC,$(@F))\n" \
-	"\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -c -o $@ -MMD $<\n\n" \
+	"\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -c -o $@ -MMD $<\n" \
+	"\n" \
 	"-include $(DEP_") V(NAME) L(":%=$(THIS_DIR)%)\n" \
-	"endif\n\n" \
+	"endif\n" \
+	"\n" \
 	"ifneq (,$(filter clean clean-") V(NAME) L(",$(MAKECMDGOALS)))\n" \
 	"$(eval clean-") V(NAME) L(": $$(eval override WHAT_") V(NAME) L(" := $$$$(sort $$$$(wildcard " \
 	"$$(addprefix $$(THIS_DIR),") V(NAME) L(" $$(OBJ_") V(NAME) L(") $$(DEP_") V(NAME) L("))))))\n" \
 	"$(eval clean-") V(NAME) L(":;$$(if $$(WHAT_") V(NAME) L("),$$(msg YEET" \
 	",    \e[38;5;119m(╯°□°)╯︵ ┻━┻\e[m $$(WHAT_") V(NAME) L(":$$(THIS_DIR)%=%))" \
 	"\t@$$(RM) $$(WHAT_") V(NAME) L("),@:))\n" \
-	"endif\n\n" \
+	"endif\n" \
+	"\n" \
 	"ifneq (,$(filter install install-") V(NAME) L(",$(MAKECMDGOALS)))\n" \
 	"$(eval install-") V(NAME) L(": override private DST_") V(NAME) L("=$(eval override private DST_") V(NAME) L(":=$$(if $$(DESTDIR),$$(DESTDIR:/=)/)$$(if $$(libdir),$$(libdir:/=)/)") V(NAME) L(".0)$(DST_") V(NAME) L("))\n" \
 	"install-") V(NAME) L(": $(THIS_DIR)") V(NAME) L("\n" \
