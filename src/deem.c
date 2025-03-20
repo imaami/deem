@@ -405,47 +405,66 @@ done:
 	return nullptr;
 }
 
+enum side {
+	left_side,
+	right_side
+};
+
+static char *
+cat_if (char      **argv,
+        enum side   side)
+{
+	char *str[] = {nullptr, nullptr};
+	str[side] = gmk_expand(argv[side]);
+	if (!str[side])
+		return nullptr;
+
+	struct ref ref[] = {{nullptr}, {nullptr}};
+	ref[side] = trim(str[side]);
+	if (!ref[side].imm) {
+		gmk_free(str[side]);
+		return nullptr;
+	}
+
+	str[!side] = gmk_expand(argv[!side]);
+	if (str[!side]) do {
+		ref[!side] = trim(str[!side]);
+		if (!ref[!side].imm) {
+			gmk_free(str[!side]);
+			break;
+		}
+
+		size_t n = ref[left_side].len.n_bytes +
+		           ref[right_side].len.n_bytes;
+		char *ret = gmk_alloc(n + 1U);
+		if (ret) {
+			__builtin_memcpy(ret, ref[left_side].imm,
+			                 ref[left_side].len.n_bytes);
+			__builtin_memcpy(&ret[ref[left_side].len.n_bytes],
+			                 ref[right_side].imm,
+			                 ref[right_side].len.n_bytes);
+			ret[n] = '\0';
+		}
+
+		gmk_free(str[left_side]);
+		gmk_free(str[right_side]);
+		return ret;
+	} while (0);
+
+	if (ref[side].imm != (char const *)str[side])
+		(void)memmove(str[side], ref[side].imm,
+		              ref[side].len.n_bytes);
+	str[side][ref[side].len.n_bytes] = '\0';
+
+	return str[side];
+}
+
 static char *
 pfx_if (useless char const    *f,
         useless unsigned int   c,
         char                 **v)
 {
-	char *rhs_str = gmk_expand(v[1]);
-	if (!rhs_str)
-		return nullptr;
-
-	struct ref rhs = trim(rhs_str);
-	if (!rhs.imm) {
-		gmk_free(rhs_str);
-		return nullptr;
-	}
-
-	char *lhs_str = gmk_expand(v[0]);
-	if (lhs_str) do {
-		struct ref lhs = trim(lhs_str);
-		if (!lhs.imm) {
-			gmk_free(lhs_str);
-			break;
-		}
-
-		size_t n = lhs.len.n_bytes + rhs.len.n_bytes;
-		char *ret = gmk_alloc(n + 1U);
-		if (ret) {
-			__builtin_memcpy(ret, lhs.imm, lhs.len.n_bytes);
-			__builtin_memcpy(&ret[lhs.len.n_bytes], rhs.imm, rhs.len.n_bytes);
-			ret[n] = '\0';
-		}
-
-		gmk_free(lhs_str);
-		gmk_free(rhs_str);
-		return ret;
-	} while (0);
-
-	if (rhs.imm != (char const *)rhs_str)
-		(void)memmove(rhs_str, rhs.imm, rhs.len.n_bytes);
-	rhs_str[rhs.len.n_bytes] = '\0';
-
-	return rhs_str;
+	return cat_if(v, right_side);
 }
 
 static char *
@@ -453,42 +472,7 @@ sfx_if (useless char const    *f,
         useless unsigned int   c,
         char                 **v)
 {
-	char *lhs_str = gmk_expand(v[0]);
-	if (!lhs_str)
-		return nullptr;
-
-	struct ref lhs = trim(lhs_str);
-	if (!lhs.imm) {
-		gmk_free(lhs_str);
-		return nullptr;
-	}
-
-	char *rhs_str = gmk_expand(v[1]);
-	if (rhs_str) do {
-		struct ref rhs = trim(rhs_str);
-		if (!rhs.imm) {
-			gmk_free(rhs_str);
-			break;
-		}
-
-		size_t n = lhs.len.n_bytes + rhs.len.n_bytes;
-		char *ret = gmk_alloc(n + 1U);
-		if (ret) {
-			__builtin_memcpy(ret, lhs.imm, lhs.len.n_bytes);
-			__builtin_memcpy(&ret[lhs.len.n_bytes], rhs.imm, rhs.len.n_bytes);
-			ret[n] = '\0';
-		}
-
-		gmk_free(lhs_str);
-		gmk_free(rhs_str);
-		return ret;
-	} while (0);
-
-	if (lhs.imm != (char const *)lhs_str)
-		(void)memmove(lhs_str, lhs.imm, lhs.len.n_bytes);
-	lhs_str[lhs.len.n_bytes] = '\0';
-
-	return lhs_str;
+	return cat_if(v, left_side);
 }
 
 static char *
