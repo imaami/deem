@@ -541,15 +541,15 @@ library (useless char const    *f,
 	"install:| install-") V(NAME) L("\n" \
 	"\n" \
 	"override SRC_") V(NAME) L(":=") V(SRC) L("\n" \
-	"override OBJ_") V(NAME) L(":=$(SRC_") V(NAME) L(":%=%.o-fpic)\n" \
-	"override DEP_") V(NAME) L(":=$(SRC_") V(NAME) L(":%=%.d)\n" \
+	"override OBJ_") V(NAME) L(":=$(SRC_") V(NAME) L(":%=$O%.o-fpic)\n" \
+	"override DEP_") V(NAME) L(":=$(SRC_") V(NAME) L(":%=$O%.d)\n" \
 	"\n" \
 	"ifneq (,$(filter all ") V(NAME) L(",$(or $(MAKECMDGOALS),all)))\n") \
-	V(NAME) L(": $(THIS_DIR)") V(NAME) L("\n" \
+	V(NAME) L(": $O") V(NAME) L("\n" \
 	"endif\n" \
 	"\n" \
 	"ifneq (,$(filter all install ") V(NAME) L(" install-") V(NAME) L(",$(or $(MAKECMDGOALS),all)))\n" \
-	"$(THIS_DIR)") V(NAME) L(": $(OBJ_") V(NAME) L(":%=$(THIS_DIR)%)\n" \
+	"$O") V(NAME) L(": $(OBJ_") V(NAME) L(")\n" \
 	"\t$(msg LINK,") V(NAME) L(")\n" \
 	"\t@+$(CC) $(CFLAGS) $(CFLAGS_") V(NAME) L(") -fPIC -shared -o $@ -MMD $^\n" \
 	"\n" \
@@ -557,22 +557,21 @@ library (useless char const    *f,
 	"\t$(msg CC,$(@F))\n" \
 	"\t@+$(CC) $(CFLAGS) $(CFLAGS_$(@F)) -fPIC -c -o $@ -MMD $<\n" \
 	"\n" \
-	"-include $(DEP_") V(NAME) L(":%=$(THIS_DIR)%)\n" \
+	"-include $(DEP_") V(NAME) L(")\n" \
 	"endif\n" \
 	"\n" \
 	"ifneq (,$(filter clean clean-") V(NAME) L(",$(MAKECMDGOALS)))\n" \
-	"$(eval clean-") V(NAME) L(": $$(eval override WHAT_") V(NAME) L(" := $$$$(sort $$$$(wildcard " \
-	"$$(addprefix $$(THIS_DIR),") V(NAME) L(" $$(OBJ_") V(NAME) L(") $$(DEP_") V(NAME) L("))))))\n" \
-	"$(eval clean-") V(NAME) L(":;$$(if $$(WHAT_") V(NAME) L("),$$(msg YEET" \
-	",    \e[38;5;119m(╯°□°)╯︵ ┻━┻\e[m $$(WHAT_") V(NAME) L(":$$(THIS_DIR)%=%))" \
-	"\t@$$(RM) $$(WHAT_") V(NAME) L("),@:))\n" \
+	"clean-") V(NAME) L(": $(eval override private WHAT_") V(NAME) L("=$$(eval clean-") V(NAME) L(": override private WHAT_") V(NAME) L(":=$$$$(sort $$$$(wildcard " \
+	"$O") V(NAME) L(" $(OBJ_") V(NAME) L(") $(DEP_") V(NAME) L(")))))$(WHAT_") V(NAME) L(")\n" \
+	"clean-") V(NAME) L(":;$(if $(WHAT_") V(NAME) L("),$(info \e[38;5;191mYEET\e[m    \e[38;5;119m(╯°□°)╯︵ ┻━┻\e[m $(WHAT_") V(NAME) L(":$O%=%))" \
+	"\t@$(RM) $(WHAT_") V(NAME) L("),@:)\n" \
 	"endif\n" \
 	"\n" \
 	"ifneq (,$(filter install install-") V(NAME) L(",$(MAKECMDGOALS)))\n" \
 	"$(eval install-") V(NAME) L(": override private DST_") V(NAME) L("=$(eval override private DST_") V(NAME) L(":=$$(if $$(DESTDIR),$$(DESTDIR:/=)/)$$(if $$(libdir),$$(libdir:/=)/)") V(NAME) L(".0)$(DST_") V(NAME) L("))\n" \
-	"install-") V(NAME) L(": $(THIS_DIR)") V(NAME) L("\n" \
+	"install-") V(NAME) L(": $O") V(NAME) L("\n" \
 	"\t$(msg INSTALL,$(DST_") V(NAME) L("))\n" \
-	"\t@install -DTsm 0644 $(THIS_DIR)") V(NAME) L(" $(DST_") V(NAME) L(")\n" \
+	"\t@install -DTsm 0644 $O") V(NAME) L(" $(DST_") V(NAME) L(")\n" \
 	"endif") N()
 
 	#define lit_(x) (sizeof x - 1U) +
@@ -622,6 +621,7 @@ deem_gmk_setup (useless gmk_floc const *floc)
 	struct buf256 loc = buf256(&loc);
 	lazy_(&loc.b, "THIS_DIR",
 	      "$(dir $(realpath $(lastword $(MAKEFILE_LIST))))");
+	deem_eval("override O=$(eval override O:=$(THIS_DIR))$(O)");
 	buf256_fini(&loc);
 
 	deem_eval(".PHONY: all clean install\n"
