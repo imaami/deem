@@ -10,6 +10,12 @@
 
 const int plugin_is_GPL_compatible;
 
+enum flavor {
+	flavor_undefined,
+	flavor_simple,
+	flavor_recursive
+};
+
 /** @brief String length
  */
 struct len {
